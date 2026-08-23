@@ -1,0 +1,40 @@
+spring:
+  datasource:
+    url: jdbc:mysql://${DB_HOST:localhost}:3306/waha?useUnicode=true&characterEncoding=UTF-8&connectionCollation=utf8mb4_unicode_ci
+    username: ${DB_USER:root}
+    password: ${DB_PASSWORD:root}
+  flyway:
+    locations: filesystem:/flyway-sql/migrations,filesystem:/flyway-sql/stored-procs
+    baseline-on-migrate: true
+
+server:
+  port: 8080
+
+waha:
+  # Base URL this backend is reachable at, used to build the invoiceUrl
+  # field on orders (e.g. for a QR code) - not a value that can be derived
+  # from the request itself, since it needs to be the address a customer's
+  # phone can actually reach, not whatever host/port the container sees
+  # internally.
+  public-base-url: ${WAHA_PUBLIC_BASE_URL:http://localhost:8081}
+  session:
+    ttl-days: 30
+  cors:
+    # Native Flutter (Android/iOS) calls this API directly and never sends
+    # CORS preflight requests at all - this setting only matters if you test
+    # against Flutter Web or a browser-based tool.
+    allowed-origins: "*"
+
+# Env var names match .env.example2 exactly - Docker Compose picks these up
+# automatically from a real .env file (not .example) sitting next to
+# docker-compose.yml. Empty defaults so a missing key fails at the API call
+# (a clear runtime error when you actually try to charge something), not at
+# startup with an opaque Spring config error.
+stripe:
+  secret-key: ${STRIPE_SECRET_KEY:}
+  webhook-secret: ${STRIPE_WEBHOOK_SECRET:}
+
+myfatoorah:
+  api-key: ${MYFATOORAH_API_KEY:}
+  base-url: ${MYFATOORAH_BASE_URL:https://apitest.myfatoorah.com}
+  webhook-secret: ${MYFATOORAH_WEBHOOK_SECRET:}

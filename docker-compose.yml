@@ -1,0 +1,43 @@
+version: "3.9"
+
+services:
+  mysql:
+    image: mysql:8.0
+    environment:
+      MYSQL_ROOT_PASSWORD: root
+      MYSQL_DATABASE: waha
+    volumes:
+      - mysql_data:/var/lib/mysql
+    ports:
+      - "3307:3306"
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 5s
+      retries: 10
+
+  waha:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: on-failure:5   # self-heals from the MySQL-not-quite-ready race on first boot
+    depends_on:
+      mysql:
+        condition: service_healthy
+    environment:
+      DB_HOST: mysql
+      DB_USER: root
+      DB_PASSWORD: root
+      # Pulled from a real .env file (not .env.example2) sitting next to
+      # this docker-compose.yml - Compose substitutes ${VAR} from .env
+      # automatically, no extra flag needed. Empty string if unset, not an
+      # error - matches application.yml's own empty defaults.
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-}
+      MYFATOORAH_API_KEY: ${MYFATOORAH_API_KEY:-}
+      MYFATOORAH_BASE_URL: ${MYFATOORAH_BASE_URL:-https://apitest.myfatoorah.com}
+      MYFATOORAH_WEBHOOK_SECRET: ${MYFATOORAH_WEBHOOK_SECRET:-}
+    ports:
+      - "8081:8080"
+
+volumes:
+  mysql_data:
