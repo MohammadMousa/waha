@@ -75,15 +75,21 @@ public class OrderController {
         }
     }
 
-    // Order history for the logged-in user. Requires auth - anonymous sessions
-    // have no persistent identity to list orders for.
+    // Order history for the logged-in user, scoped to the active store.
+    // Explicit ?storeId= wins over session store (same precedence as products).
+    // Rule §8/§9: every operation has a store context; §14: store switch resets state.
     @GetMapping
     public ResponseEntity<?> listOrders(@RequestHeader(value = "Authorization", required = false) String authHeader,
+                                         @RequestParam(required = false) Long storeId,
                                          @RequestParam(defaultValue = "0") int page,
                                          @RequestParam(defaultValue = "20") int size) {
         try {
             String username = sessionService.resolveUsername(null, authHeader);
-            return ResponseEntity.ok(orderService.listUserOrders(username, page, size));
+            Long resolvedStoreId = sessionService.resolveStoreId(storeId, authHeader);
+            if (resolvedStoreId == null) {
+                return ResponseEntity.status(400).body(new ErrorResponse("No store context — select a store first"));
+            }
+            return ResponseEntity.ok(orderService.listUserOrders(username, resolvedStoreId, page, size));
         } catch (InvalidRequestException e) {
             return ResponseEntity.status(401).body(new ErrorResponse("Authentication required to list orders"));
         }

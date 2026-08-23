@@ -1,0 +1,7 @@
+FROM eclipse-temurin:17-jre-alpine
+WORKDIR /app
+COPY target/waha-0.1.0.jar app.jar
+COPY db/migrations /flyway-sql/migrations
+COPY db/stored-procs /flyway-sql/stored-procs
+EXPOSE 8080
+ENTRYPOINT ["java", "-jar", "app.jar"]

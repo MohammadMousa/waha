@@ -10,6 +10,19 @@ Success` — nothing more. No accounts, no digital catalog, no real payment,
 no offline sync, no fleet management. Those are later phases; see
 [Roadmap](#roadmap) below.
 
+## Documentation
+
+Detailed specs live in [`/docs`](docs/):
+
+| Document | Status |
+|----------|--------|
+| [Odoo Integration](docs/odoo-integration.md) | Complete |
+| [Roles & Permissions](docs/roles-permissions.md) | In progress |
+| [Order Statuses](docs/order-statuses.md) | In progress |
+| [Payment Methods](docs/payment-methods.md) | In progress |
+
+---
+
 ## What's reused from `commerce-platform`, and what isn't
 
 This wasn't built from zero. The parts of `commerce-platform` that solve the

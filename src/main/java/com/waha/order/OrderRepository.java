@@ -243,11 +243,11 @@ public class OrderRepository {
     // ordered newest-first. Page size capped by caller.
     public record OrderSummary(String orderId, Long displayId, String status, String paymentMethod, BigDecimal total, String currency, String invoiceUrl, java.time.Instant createdAt) {}
 
-    public List<OrderSummary> findByUsername(String username, int page, int size) {
+    public List<OrderSummary> findByUsername(String username, long storeId, int page, int size) {
         return jdbcTemplate.query(
             "SELECT o.id, o.display_id, o.status, o.total_amount, o.currency, o.created_at, " +
             "(SELECT p.provider FROM payments p WHERE p.order_id = o.id AND p.outcome = 'PAID' ORDER BY p.attempted_at DESC LIMIT 1) AS payment_method " +
-            "FROM orders o WHERE o.username = ? ORDER BY o.created_at DESC LIMIT ? OFFSET ?",
+            "FROM orders o WHERE o.username = ? AND o.store_id = ? ORDER BY o.created_at DESC LIMIT ? OFFSET ?",
             (rs, i) -> {
                 long did = rs.getLong("display_id");
                 Long displayId = rs.wasNull() ? null : did;
@@ -259,7 +259,7 @@ public class OrderRepository {
                     rs.getTimestamp("created_at").toInstant()
                 );
             },
-            username, size, page * size
+            username, storeId, size, page * size
         );
     }
 

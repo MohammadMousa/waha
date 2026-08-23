@@ -77,12 +77,14 @@ public class AuthController {
         long userId = userRepository.create(request.username(), hash);
         String token = sessionService.createSession(userId);
         if (mode != null) sessionService.setMode(token, mode);
+        Long defStore = defaultStoreId();
+        if (defStore != null) {
+            roleRepository.assignRole(userId, Role.REGISTERED, defStore);
+            sessionService.setStore(token, defStore);
+        }
 
-        // Every registered account gets REGISTERED role system-wide automatically
-        roleRepository.assignRole(userId, Role.REGISTERED, 0L);
-
-        Set<String> permissions = sessionService.resolvePermissions(userId, null);
-        return ResponseEntity.ok(new AuthResponse(token, userId, request.username(), null, defaultStoreId(), mode, systemProperties(), permissions));
+        Set<String> permissions = sessionService.resolvePermissions(userId, defStore);
+        return ResponseEntity.ok(new AuthResponse(token, userId, request.username(), defStore, defStore, mode, systemProperties(), permissions));
     }
 
     @PostMapping("/login")
@@ -103,9 +105,11 @@ public class AuthController {
 
         String token = sessionService.createSession(record.get().id());
         if (mode != null) sessionService.setMode(token, mode);
+        Long defStore = defaultStoreId();
+        if (defStore != null) sessionService.setStore(token, defStore);
 
-        Set<String> permissions = sessionService.resolvePermissions(record.get().id(), null);
-        return ResponseEntity.ok(new AuthResponse(token, record.get().id(), record.get().username(), null, defaultStoreId(), mode, systemProperties(), permissions));
+        Set<String> permissions = sessionService.resolvePermissions(record.get().id(), defStore);
+        return ResponseEntity.ok(new AuthResponse(token, record.get().id(), record.get().username(), defStore, defStore, mode, systemProperties(), permissions));
     }
 
     @PostMapping("/logout")

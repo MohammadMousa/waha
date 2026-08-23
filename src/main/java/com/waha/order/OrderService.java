@@ -18,6 +18,7 @@ import com.waha.store.StoreRepository;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
@@ -37,6 +38,7 @@ public class OrderService {
     private final StoreRepository storeRepository;
     private final PaymentProvider paymentProvider;
     private final Map<String, RedirectPaymentProvider> redirectProviders;
+    private final ApplicationEventPublisher eventPublisher;
 
     // Same pragmatic choice as OrderRepository's own publicBaseUrl field -
     // only used to build a default invoice-view return URL for the
@@ -47,12 +49,14 @@ public class OrderService {
 
     public OrderService(OrderRepository orderRepository, ProductRepository productRepository,
                          StoreRepository storeRepository, PaymentProvider paymentProvider,
-                         Map<String, RedirectPaymentProvider> redirectProviders) {
+                         Map<String, RedirectPaymentProvider> redirectProviders,
+                         ApplicationEventPublisher eventPublisher) {
         this.orderRepository = orderRepository;
         this.productRepository = productRepository;
         this.storeRepository = storeRepository;
         this.paymentProvider = paymentProvider;
         this.redirectProviders = redirectProviders;
+        this.eventPublisher = eventPublisher;
     }
 
     private record Totals(BigDecimal subtotal, BigDecimal tax, BigDecimal total, List<OrderItemView> items, Map<Long, Product> productsById) {}
@@ -142,11 +146,11 @@ public class OrderService {
         return orderRepository.getOrderDetail(orderId, true);
     }
 
-    public List<OrderRepository.OrderSummary> listUserOrders(String username, int page, int size) {
+    public List<OrderRepository.OrderSummary> listUserOrders(String username, long storeId, int page, int size) {
         if (username == null || username.isBlank()) {
             throw new InvalidRequestException("username is required");
         }
-        return orderRepository.findByUsername(username, page, Math.min(size, 100));
+        return orderRepository.findByUsername(username, storeId, page, Math.min(size, 100));
     }
 
     // Cancels a CREATED order owned by this username if no external payment
@@ -189,7 +193,9 @@ public class OrderService {
             throw new OrderNotPayableException("Order " + orderId + " could not be marked paid (already paid, or modified concurrently)");
         }
 
-        return new PayOrderResponse(true, "PAID", null, orderRepository.getOrderDetail(orderId, true));
+        OrderResponse paid = orderRepository.getOrderDetail(orderId, true);
+        eventPublisher.publishEvent(new OrderPaidEvent(orderId, paid.storeId(), paid.currency()));
+        return new PayOrderResponse(true, "PAID", null, paid);
     }
 
     // Starts the redirect-based flow (Normal/Shopping web checkout) - a
