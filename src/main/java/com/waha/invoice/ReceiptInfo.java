@@ -11,5 +11,7 @@ public record ReceiptInfo(
     String addressText,
     String vatNumber,
     String crNumber,
-    Long logoResourceId
+    Long logoResourceId,
+    String unpaidInvoiceTitle,
+    String paidInvoiceTitle
 ) {}

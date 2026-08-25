@@ -68,6 +68,25 @@
             <artifactId>openpdf</artifactId>
             <version>1.3.43</version>
         </dependency>
+        <!-- Arabic text shaping (letter joining + BiDi visual reorder) for PDF renderer.
+             OpenPDF has no GSUB engine; ICU4J fills that gap with ArabicShaping + Bidi. -->
+        <dependency>
+            <groupId>com.ibm.icu</groupId>
+            <artifactId>icu4j</artifactId>
+            <version>74.2</version>
+        </dependency>
+        <!-- QR code generation for invoice header (HTML + PDF). core = encoder,
+             javase = MatrixToImageWriter / BufferedImage support. -->
+        <dependency>
+            <groupId>com.google.zxing</groupId>
+            <artifactId>core</artifactId>
+            <version>3.5.3</version>
+        </dependency>
+        <dependency>
+            <groupId>com.google.zxing</groupId>
+            <artifactId>javase</artifactId>
+            <version>3.5.3</version>
+        </dependency>
 
         <!-- test -->
         <dependency>

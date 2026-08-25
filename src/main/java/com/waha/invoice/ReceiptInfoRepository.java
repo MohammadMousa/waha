@@ -15,11 +15,14 @@ public class ReceiptInfoRepository {
         this.jdbcTemplate = jdbcTemplate;
     }
 
+    private static final String SELECT_COLS =
+        "store_id, name_ar, name_en, address_text, vat_number, cr_number, logo_resource_id, " +
+        "unpaid_invoice_title, paid_invoice_title";
+
     // Exact match — kept for single-store lookups where the scope chain isn't available.
     public Optional<ReceiptInfo> findByStoreId(long storeId) {
         List<ReceiptInfo> results = jdbcTemplate.query(
-            "SELECT store_id, name_ar, name_en, address_text, vat_number, cr_number, logo_resource_id " +
-            "FROM receipt_info WHERE store_id = ?",
+            "SELECT " + SELECT_COLS + " FROM receipt_info WHERE store_id = ?",
             (rs, i) -> mapRow(rs),
             storeId
         );
@@ -44,8 +47,7 @@ public class ReceiptInfoRepository {
         rankCase.append("ELSE ").append(scopeChain.size()).append(" END");
 
         List<ReceiptInfo> results = jdbcTemplate.query(
-            "SELECT store_id, name_ar, name_en, address_text, vat_number, cr_number, logo_resource_id " +
-            "FROM receipt_info WHERE store_id IN (" + inClause + ") " +
+            "SELECT " + SELECT_COLS + " FROM receipt_info WHERE store_id IN (" + inClause + ") " +
             "ORDER BY " + rankCase + " LIMIT 1",
             (rs, i) -> mapRow(rs)
         );
@@ -62,7 +64,9 @@ public class ReceiptInfoRepository {
             rs.getString("address_text"),
             rs.getString("vat_number"),
             rs.getString("cr_number"),
-            logoResourceId
+            logoResourceId,
+            rs.getString("unpaid_invoice_title"),
+            rs.getString("paid_invoice_title")
         );
     }
 }

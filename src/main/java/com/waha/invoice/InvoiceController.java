@@ -44,6 +44,7 @@ public class InvoiceController {
     @GetMapping(value = "/{orderId}", produces = MediaType.TEXT_HTML_VALUE)
     public ResponseEntity<String> view(@PathVariable String orderId,
                                         @RequestParam(required = false) String ref,
+                                        @RequestParam(defaultValue = "en") String lang,
                                         @RequestParam(required = false) String paymentId,
                                         @RequestParam(name = "Id", required = false) String myfatoorahId,
                                         @RequestParam(name = "session_id", required = false) String stripeSessionId) {
@@ -57,7 +58,7 @@ public class InvoiceController {
             OrderResponse order = orderService.getOrder(orderId);
             List<Long> scopeChain = storeRepository.resolveScopeChain(order.storeId());
             ReceiptInfo receiptInfo = receiptInfoRepository.findByStoreChain(scopeChain).orElse(null);
-            return ResponseEntity.ok(InvoiceHtmlRenderer.render(order, receiptInfo, ref));
+            return ResponseEntity.ok(InvoiceHtmlRenderer.render(order, receiptInfo, ref, lang));
         } catch (OrderNotFoundException e) {
             return ResponseEntity.status(404).body("<!DOCTYPE html><html><body><h1>Invoice not found</h1></body></html>");
         }
@@ -74,7 +75,7 @@ public class InvoiceController {
             byte[] pdfBytes = InvoicePdfRenderer.render(order, receiptInfo, lang);
             String filename = "invoice-" + (order.displayId() != null ? order.displayId() : orderId) + ".pdf";
             return ResponseEntity.ok()
-                .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"" + filename + "\"")
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + filename + "\"")
                 .contentType(MediaType.APPLICATION_PDF)
                 .contentLength(pdfBytes.length)
                 .body(pdfBytes);

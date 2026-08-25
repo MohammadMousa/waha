@@ -200,11 +200,11 @@ public class OrderRepository {
         }
 
         List<OrderItemView> items = jdbcTemplate.query(
-            "SELECT oi.product_id, p.name, oi.quantity, oi.unit_price, (oi.quantity * oi.unit_price) AS line_total " +
+            "SELECT oi.product_id, p.barcode, p.name, oi.quantity, oi.unit_price, (oi.quantity * oi.unit_price) AS line_total " +
             "FROM order_items oi JOIN products p ON oi.product_id = p.id WHERE oi.order_id = ?",
             (rs, i) -> new OrderItemView(
-                rs.getLong("product_id"), parseJson(rs.getString("name")), rs.getInt("quantity"),
-                rs.getBigDecimal("unit_price"), rs.getBigDecimal("line_total")
+                rs.getLong("product_id"), rs.getString("barcode"), parseJson(rs.getString("name")),
+                rs.getInt("quantity"), rs.getBigDecimal("unit_price"), rs.getBigDecimal("line_total")
             ), orderId
         );
 

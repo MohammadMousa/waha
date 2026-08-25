@@ -100,7 +100,7 @@ public class OrderService {
                 throw new ProductNotSellableException("Product " + p.name() + " is not currently sellable");
             }
             BigDecimal lineTotal = p.price().multiply(BigDecimal.valueOf(i.quantity()));
-            return new OrderItemView(p.id(), p.name(), i.quantity(), p.price(), lineTotal);
+            return new OrderItemView(p.id(), p.barcode(), p.name(), i.quantity(), p.price(), lineTotal);
         }).toList();
 
         BigDecimal subtotal = itemViews.stream().map(OrderItemView::lineTotal).reduce(BigDecimal.ZERO, BigDecimal::add);
