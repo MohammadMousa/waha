@@ -50,11 +50,16 @@ public class OdooAdminController {
             return ResponseEntity.ok(Map.of("configured", false));
         }
         ExternalSystem s = sys.get();
+        // A store is an "inherited" consumer if it is not the integration owner.
+        // Owners configure the integration and pull catalog; children push orders only.
+        boolean inherited = s.ownerStoreId() != null
+            && storeId != null
+            && !s.ownerStoreId().equals(storeId);
         Map<String, Integer> queueStats = systemRepo.queueStats(s.id());
-        // Use HashMap — Map.of() rejects null values and lastCategorySyncAt/lastProductSyncAt
-        // are null until the first pull runs.
         Map<String, Object> body = new java.util.HashMap<>();
         body.put("configured",          true);
+        body.put("inherited",           inherited);
+        body.put("ownerStoreId",        s.ownerStoreId());
         body.put("enabled",             s.enabled());
         body.put("baseUrl",             s.baseUrl()            != null ? s.baseUrl()            : "");
         body.put("username",            s.username()           != null ? s.username()           : "");
@@ -85,13 +90,30 @@ public class OdooAdminController {
             return ResponseEntity.status(400).body(new ErrorResponse("baseUrl is required"));
         }
 
-        String apiKey          = request.apiKey()          != null && !request.apiKey().isBlank()          ? request.apiKey().strip()          : null;
-        String username        = request.username()        != null && !request.username().isBlank()        ? request.username().strip()        : null;
+        String apiKey           = request.apiKey()           != null && !request.apiKey().isBlank()           ? request.apiKey().strip()           : null;
+        String username         = request.username()         != null && !request.username().isBlank()         ? request.username().strip()         : null;
         String customerOverride = request.customerOverride() != null && !request.customerOverride().isBlank() ? request.customerOverride().strip() : null;
-        ExternalSystem sys = systemRepo.upsert("ODOO", request.baseUrl().strip(), apiKey, username, customerOverride);
+        // The store that saves the integration becomes its owner (set once, never overwritten).
+        Long ownerStoreId = storeId;
+        ExternalSystem sys = systemRepo.upsert("ODOO", request.baseUrl().strip(), apiKey, username, customerOverride, ownerStoreId);
         // Reset cached partner so next order uses the new override.
         orderSyncService.resetPartnerCache();
         return ResponseEntity.ok(Map.of("id", sys.id(), "name", sys.name(), "enabled", sys.enabled()));
+    }
+
+    // Throws ForbiddenException if the current store is not the integration owner.
+    // Child stores inherit the integration for order push only; catalog pull is
+    // reserved for the owner so catalog writes always land at the correct root.
+    private void requireOwner(Long storeId) {
+        systemRepo.findByName("ODOO").ifPresent(sys -> {
+            if (sys.ownerStoreId() != null && storeId != null
+                    && !sys.ownerStoreId().equals(storeId)) {
+                throw new ForbiddenException(
+                    "Catalog pull is not allowed from this store. " +
+                    "This store inherits the Odoo integration from store " + sys.ownerStoreId() +
+                    ". Switch to the owner store to pull.");
+            }
+        });
     }
 
     // ── POST /api/admin/odoo/pull/categories ──────────────────────────────────
@@ -108,10 +130,13 @@ public class OdooAdminController {
         }
 
         try {
+            requireOwner(storeId);
             int count = catalogService.pullCategories(storeId);
             return ResponseEntity.ok(Map.of("pulled", count, "entityType", "CATEGORY"));
         } catch (OdooException e) {
             return ResponseEntity.status(502).body(new ErrorResponse("Odoo error: " + e.getMessage()));
+        } catch (ForbiddenException e) {
+            return ResponseEntity.status(403).body(new ErrorResponse(e.getMessage()));
         }
     }
 
@@ -129,6 +154,7 @@ public class OdooAdminController {
         }
 
         try {
+            requireOwner(storeId);
             int pulled  = catalogService.pullProducts(storeId);
             int visible = catalogService.countVisibleProducts(storeId);
             Map<String, Object> body = new java.util.HashMap<>();
@@ -138,6 +164,8 @@ public class OdooAdminController {
             return ResponseEntity.ok(body);
         } catch (OdooException e) {
             return ResponseEntity.status(502).body(new ErrorResponse("Odoo error: " + e.getMessage()));
+        } catch (ForbiddenException e) {
+            return ResponseEntity.status(403).body(new ErrorResponse(e.getMessage()));
         }
     }
 

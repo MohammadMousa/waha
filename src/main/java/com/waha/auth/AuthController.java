@@ -148,7 +148,11 @@ public class AuthController {
             if (request.storeId() == null) {
                 return ResponseEntity.status(400).body(new ErrorResponse("storeId is required"));
             }
-            if (!storeRepository.isSelectable(request.storeId())) {
+            Set<String> currentPerms = sessionService.resolvePermissions(session.userId(), session.storeId());
+            boolean canSelect = currentPerms.contains(Permission.MANAGE_STORES.name())
+                ? storeRepository.isAdminSelectable(request.storeId())
+                : storeRepository.isSelectable(request.storeId());
+            if (!canSelect) {
                 return ResponseEntity.status(400).body(new ErrorResponse("storeId is not a valid store"));
             }
 

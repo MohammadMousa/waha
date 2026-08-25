@@ -84,6 +84,43 @@ public class StoreRepository {
         }
     }
 
+    // All active stores reachable downward from rootStoreId (itself + every
+    // descendant). Used by GET /api/stores/admin so admins can see their
+    // full store tree, including non-public grouping nodes.
+    public List<StoreSummary> findAdminStores(long rootStoreId) {
+        return jdbcTemplate.query(
+            "WITH RECURSIVE scope AS (" +
+            "  SELECT id, name, display_name, currency, parent_store_id" +
+            "  FROM stores WHERE id = ? AND active = TRUE" +
+            "  UNION ALL" +
+            "  SELECT s.id, s.name, s.display_name, s.currency, s.parent_store_id" +
+            "  FROM stores s JOIN scope p ON s.parent_store_id = p.id WHERE s.active = TRUE" +
+            ") SELECT id, name, display_name, currency FROM scope ORDER BY id",
+            (rs, i) -> {
+                String rawJson = rs.getString("display_name");
+                JsonNode displayName = parseJsonOrNull(rawJson);
+                return new StoreSummary(rs.getLong("id"), rs.getString("name"), displayName, rs.getString("currency"));
+            },
+            rootStoreId
+        );
+    }
+
+    // The store where this user's highest admin role is directly assigned.
+    // "Highest" = shortest path (closest to tree root). Used to determine
+    // the root of their admin realm for GET /api/stores/admin.
+    public Optional<Long> findAdminRootStore(long userId) {
+        List<Long> results = jdbcTemplate.query(
+            "SELECT ur.store_id FROM user_roles ur" +
+            " JOIN roles r ON ur.role_id = r.id" +
+            " JOIN stores s ON ur.store_id = s.id" +
+            " WHERE ur.user_id = ? AND r.name IN ('ADMIN', 'SUPER_ADMIN')" +
+            " ORDER BY CHAR_LENGTH(COALESCE(s.path, '')) ASC, ur.store_id ASC LIMIT 1",
+            (rs, i) -> rs.getLong(1),
+            userId
+        );
+        return results.stream().findFirst();
+    }
+
     // Used by POST /api/auth/store to reject pointing a session at a
     // grouping node or warehouse - same "public" signal as the picker
     // above, checked again here since this is a different, freeform
@@ -92,6 +129,17 @@ public class StoreRepository {
     public boolean isSelectable(long storeId) {
         Integer count = jdbcTemplate.queryForObject(
             "SELECT COUNT(*) FROM stores WHERE id = ? AND public = TRUE AND active = TRUE",
+            Integer.class, storeId
+        );
+        return count != null && count > 0;
+    }
+
+    // Like isSelectable but for admins: only requires the store to be active.
+    // Used by POST /api/auth/store when the caller has MANAGE_STORES — they
+    // can point their session at any active store, including non-public ones.
+    public boolean isAdminSelectable(long storeId) {
+        Integer count = jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM stores WHERE id = ? AND active = TRUE",
             Integer.class, storeId
         );
         return count != null && count > 0;
