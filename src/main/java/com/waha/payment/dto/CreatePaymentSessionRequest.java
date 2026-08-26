@@ -1,7 +1,7 @@
 package com.waha.payment.dto;
 
-// successUrl/cancelUrl are optional - omit either and it defaults to the
-// order's invoice view (GET /api/invoices/{id}), a sensible landing page
-// even without a real frontend route wired up yet. Pass your own when the
-// app has proper in-app routes to return to.
-public record CreatePaymentSessionRequest(String provider, String successUrl, String cancelUrl) {}
+// provider: key identifying the aggregator (stripe, myfatoorah).
+// providerMode: the payment_methods.provider value the client selected (REDIRECT or QR_LINK).
+//   QR_LINK causes the backend to generate a QR data-uri and return expiresAt.
+// successUrl/cancelUrl: optional — default to the order's invoice view.
+public record CreatePaymentSessionRequest(String provider, String providerMode, String successUrl, String cancelUrl) {}

@@ -6,7 +6,6 @@ import com.waha.order.dto.OrderItemView;
 import com.waha.order.dto.OrderResponse;
 import com.waha.payment.dto.PaymentRecord;
 import com.waha.product.Product;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.SqlOutParameter;
@@ -15,7 +14,9 @@ import org.springframework.jdbc.core.simple.SimpleJdbcInsert;
 import org.springframework.stereotype.Repository;
 
 import java.math.BigDecimal;
+import java.sql.Timestamp;
 import java.sql.Types;
+import java.time.Instant;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -32,13 +33,15 @@ public class OrderRepository {
     private final SimpleJdbcCall markPaidCall;
     private final SimpleJdbcInsert orderItemsInsert;
     private final SimpleJdbcInsert paymentsInsert;
+    private final SimpleJdbcInsert paymentAttemptsInsert;
     private final JdbcTemplate jdbcTemplate;
     private final ObjectMapper objectMapper;
 
-    @Value("${waha.public-base-url}")
-    private String publicBaseUrl;
+    private final com.waha.config.ConfigService configService;
 
-    public OrderRepository(JdbcTemplate jdbcTemplate, ObjectMapper objectMapper) {
+    public OrderRepository(JdbcTemplate jdbcTemplate, ObjectMapper objectMapper,
+                           com.waha.config.ConfigService configService) {
+        this.configService = configService;
         this.objectMapper = objectMapper;
         this.jdbcTemplate = jdbcTemplate;
 
@@ -61,6 +64,10 @@ public class OrderRepository {
         this.paymentsInsert = new SimpleJdbcInsert(jdbcTemplate)
             .withTableName("payments")
             .usingColumns("id", "order_id", "provider", "outcome", "provider_reference", "detail");
+
+        this.paymentAttemptsInsert = new SimpleJdbcInsert(jdbcTemplate)
+            .withTableName("payment_attempts")
+            .usingColumns("id", "order_id", "provider", "provider_reference", "redirect_url", "qr_data_uri", "expires_at");
     }
 
     public record OrderPaymentInfo(String status, int version, BigDecimal totalAmount, String currency) {}
@@ -119,9 +126,9 @@ public class OrderRepository {
         return (Boolean) result.get("p_success");
     }
 
-    // Logged for every payment interaction, success or failure - an audit trail
-    // of attempts, distinct from order_status_history which only records real
-    // header-status transitions (CREATED -> PENDING -> PAID / CANCELLED).
+    // Audit trail for finalized payment outcomes (PAID from simulated/terminal,
+    // FAILED from any provider). Redirect-based sessions write their PENDING
+    // record to payment_attempts instead — see recordPendingAttempt.
     public void recordPayment(String orderId, String provider, String outcome, String providerReference, String detail) {
         Map<String, Object> row = new HashMap<>();
         row.put("id", UUID.randomUUID().toString());
@@ -133,21 +140,39 @@ public class OrderRepository {
         paymentsInsert.execute(row);
     }
 
-    // A webhook arrives with the PROVIDER's own reference (a Stripe
-    // Checkout Session id, a MyFatoorah InvoiceId) - never our order id
-    // directly. This is how a webhook maps back to an order, reusing
-    // payments instead of a separate sessions table: the reference
-    // gets stored there the moment a checkout session is created (see
-    // OrderService.startCheckoutSession), so this is just looking up what
-    // was already recorded, not a new concept.
-    // The PENDING record written when a checkout session is created.
-    // Its provider_reference is OUR stored reference (e.g. MyFatoorah InvoiceId),
-    // NOT the paymentId the redirect URL carries — those differ for MyFatoorah.
+    // Records an in-flight redirect/QR session in the hot payment_attempts table.
+    // Lives there until the webhook confirms PAID (then cloned to payments and
+    // removed), or until it expires and is cleared by the weekly cleanup.
+    public void recordPendingAttempt(String orderId, String provider, String providerReference,
+                                     String redirectUrl, String qrDataUri, Instant expiresAt) {
+        Map<String, Object> row = new HashMap<>();
+        row.put("id", UUID.randomUUID().toString());
+        row.put("order_id", orderId);
+        row.put("provider", provider);
+        row.put("provider_reference", providerReference);
+        row.put("redirect_url", redirectUrl != null ? redirectUrl : "");
+        row.put("qr_data_uri", qrDataUri);
+        row.put("expires_at", Timestamp.from(expiresAt));
+        paymentAttemptsInsert.execute(row);
+    }
+
+    // Deletes the in-flight attempt record after it is resolved (paid or
+    // otherwise). Call this after writing the final outcome to payments.
+    public void removePaymentAttempt(String providerReference) {
+        jdbcTemplate.update(
+            "DELETE FROM payment_attempts WHERE provider_reference = ?",
+            providerReference
+        );
+    }
+
+    // The PENDING attempt written when a checkout session is created.
+    // provider_reference is OUR stored reference (e.g. MyFatoorah InvoiceId),
+    // not the paymentId the redirect URL carries — those differ for MyFatoorah.
     public record PendingPayment(String provider, String providerReference) {}
 
     public Optional<PendingPayment> findPendingPayment(String orderId) {
         List<PendingPayment> results = jdbcTemplate.query(
-            "SELECT provider, provider_reference FROM payments WHERE order_id = ? AND outcome = 'PENDING' ORDER BY attempted_at DESC LIMIT 1",
+            "SELECT provider, provider_reference FROM payment_attempts WHERE order_id = ? ORDER BY created_at DESC LIMIT 1",
             (rs, i) -> new PendingPayment(rs.getString("provider"), rs.getString("provider_reference")),
             orderId
         );
@@ -156,9 +181,11 @@ public class OrderRepository {
 
     public record OrderIdAndProvider(String orderId, String provider) {}
 
+    // A webhook arrives with the provider's own reference — look it up in the
+    // in-flight table to map back to our order.
     public Optional<OrderIdAndProvider> findOrderIdByProviderReference(String providerReference) {
         List<OrderIdAndProvider> results = jdbcTemplate.query(
-            "SELECT order_id, provider FROM payments WHERE provider_reference = ? ORDER BY attempted_at DESC LIMIT 1",
+            "SELECT order_id, provider FROM payment_attempts WHERE provider_reference = ? LIMIT 1",
             (rs, i) -> new OrderIdAndProvider(rs.getString("order_id"), rs.getString("provider")),
             providerReference
         );
@@ -232,7 +259,7 @@ public class OrderRepository {
             (BigDecimal) header.get("total_amount"), (BigDecimal) header.get("tax_rate"),
             (String) header.get("currency"), (String) header.get("payment_reference"),
             (String) header.get("payment_method"),
-            publicBaseUrl + "/api/invoices/" + orderId,
+            configService.getPublicBaseUrl() + "/api/invoices/" + orderId,
             createdAt,
             items,
             payments
@@ -255,7 +282,7 @@ public class OrderRepository {
                     rs.getString("id"), displayId, rs.getString("status"),
                     rs.getString("payment_method"),
                     rs.getBigDecimal("total_amount"), rs.getString("currency"),
-                    publicBaseUrl + "/api/invoices/" + rs.getString("id"),
+                    configService.getPublicBaseUrl() + "/api/invoices/" + rs.getString("id"),
                     rs.getTimestamp("created_at").toInstant()
                 );
             },
@@ -275,9 +302,9 @@ public class OrderRepository {
         );
         if (rows.isEmpty()) return false;
 
-        // Block if a PENDING payment exists (redirect already started)
+        // Block only if a non-expired attempt is in-flight
         Integer pendingCount = jdbcTemplate.queryForObject(
-            "SELECT COUNT(*) FROM payments WHERE order_id = ? AND outcome = 'PENDING'",
+            "SELECT COUNT(*) FROM payment_attempts WHERE order_id = ? AND expires_at > NOW()",
             Integer.class, orderId
         );
         if (pendingCount != null && pendingCount > 0) return false;

@@ -1,11 +1,13 @@
 package com.waha.order;
 
 import com.waha.common.InvalidRequestException;
+import com.waha.invoice.QrHelper;
 import com.waha.order.dto.*;
 import com.waha.payment.PaymentAttemptRequest;
 import com.waha.payment.PaymentAttemptResult;
 import com.waha.payment.PaymentProvider;
 import com.waha.payment.PaymentSession;
+import com.waha.payment.PaymentSseRegistry;
 import com.waha.payment.PaymentStatus;
 import com.waha.payment.RedirectPaymentProvider;
 import com.waha.payment.dto.CreatePaymentSessionRequest;
@@ -23,6 +25,8 @@ import org.springframework.stereotype.Service;
 
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.time.Instant;
+import java.time.temporal.ChronoUnit;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
@@ -38,25 +42,25 @@ public class OrderService {
     private final StoreRepository storeRepository;
     private final PaymentProvider paymentProvider;
     private final Map<String, RedirectPaymentProvider> redirectProviders;
+    private final PaymentSseRegistry sseRegistry;
     private final ApplicationEventPublisher eventPublisher;
 
-    // Same pragmatic choice as OrderRepository's own publicBaseUrl field -
-    // only used to build a default invoice-view return URL for the
-    // redirect payment flow below, not worth a shared config bean for one
-    // more call site.
-    @Value("${waha.public-base-url}")
-    private String publicBaseUrl;
+    private final com.waha.config.ConfigService configService;
 
     public OrderService(OrderRepository orderRepository, ProductRepository productRepository,
                          StoreRepository storeRepository, PaymentProvider paymentProvider,
                          Map<String, RedirectPaymentProvider> redirectProviders,
-                         ApplicationEventPublisher eventPublisher) {
+                         PaymentSseRegistry sseRegistry,
+                         ApplicationEventPublisher eventPublisher,
+                         com.waha.config.ConfigService configService) {
         this.orderRepository = orderRepository;
         this.productRepository = productRepository;
         this.storeRepository = storeRepository;
         this.paymentProvider = paymentProvider;
         this.redirectProviders = redirectProviders;
+        this.sseRegistry = sseRegistry;
         this.eventPublisher = eventPublisher;
+        this.configService = configService;
     }
 
     private record Totals(BigDecimal subtotal, BigDecimal tax, BigDecimal total, List<OrderItemView> items, Map<Long, Product> productsById) {}
@@ -215,19 +219,30 @@ public class OrderService {
         if (request.provider() == null || request.provider().isBlank()) {
             throw new InvalidRequestException("provider is required (e.g. \"stripe\" or \"myfatoorah\")");
         }
-        RedirectPaymentProvider provider = redirectProviders.get(request.provider().toLowerCase());
+        // payment_methods.key may carry a _qr suffix for kiosk QR rows
+        // (e.g. "stripe_qr") — strip it to reach the underlying provider bean.
+        String providerKey = request.provider().toLowerCase().replace("_qr", "");
+        RedirectPaymentProvider provider = redirectProviders.get(providerKey);
         if (provider == null) {
             throw new InvalidRequestException("Unknown payment provider: " + request.provider());
         }
 
-        String defaultReturnUrl = publicBaseUrl + "/api/invoices/" + orderId;
+        String defaultReturnUrl = configService.getPublicBaseUrl() + "/api/invoices/" + orderId;
         String successUrl = request.successUrl() != null ? request.successUrl() : defaultReturnUrl;
         String cancelUrl = request.cancelUrl() != null ? request.cancelUrl() : defaultReturnUrl;
 
         PaymentSession session = provider.createSession(info.totalAmount(), info.currency(), orderId, successUrl, cancelUrl);
-        orderRepository.recordPayment(orderId, request.provider().toLowerCase(), PaymentStatus.PENDING.name(), session.providerReference(), null);
+        Instant expiresAt = Instant.now().plus(15, ChronoUnit.MINUTES);
 
-        return new PaymentSessionResponse(session.redirectUrl());
+        // Generate QR only for QR_LINK methods (kiosk); for plain REDIRECT the
+        // Flutter app opens the URL in a browser and doesn't need a QR.
+        boolean isQrFlow = "QR_LINK".equalsIgnoreCase(request.providerMode());
+        String qrDataUri = isQrFlow ? QrHelper.generateDataUri(session.redirectUrl(), 300) : null;
+
+        orderRepository.recordPendingAttempt(orderId, providerKey,
+            session.providerReference(), session.redirectUrl(), qrDataUri, expiresAt);
+
+        return new PaymentSessionResponse(session.redirectUrl(), qrDataUri, isQrFlow ? expiresAt : null);
     }
 
     // Called when the payment gateway redirects back to our invoice URL.
@@ -253,7 +268,9 @@ public class OrderService {
             log.info("Redirect callback verified — order={} provider={} status={}", orderId, providerName, status);
             if (status == PaymentStatus.PAID) {
                 orderRepository.recordPayment(orderId, providerName, "PAID", storedRef, null);
+                orderRepository.removePaymentAttempt(storedRef);
                 orderRepository.markPaid(orderId, info.version(), storedRef, providerName);
+                sseRegistry.notifyPaid(orderId);
             }
         } catch (Exception e) {
             log.warn("Redirect callback verification failed — order={} provider={}: {}", orderId, providerName, e.getMessage());
@@ -285,9 +302,11 @@ public class OrderService {
         }
 
         orderRepository.recordPayment(orderId, provider, status.name(), providerReference, null);
+        orderRepository.removePaymentAttempt(providerReference);
 
         if (status == PaymentStatus.PAID) {
             orderRepository.markPaid(orderId, info.version(), providerReference, provider);
+            sseRegistry.notifyPaid(orderId);
         }
     }
 }

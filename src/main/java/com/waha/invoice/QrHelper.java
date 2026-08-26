@@ -13,11 +13,11 @@ import java.io.ByteArrayOutputStream;
 import java.util.Base64;
 import java.util.Map;
 
-final class QrHelper {
+public final class QrHelper {
 
     private QrHelper() {}
 
-    static byte[] generatePng(String content, int size) {
+    public static byte[] generatePng(String content, int size) {
         if (content == null || content.isBlank()) return new byte[0];
         try {
             QRCodeWriter writer = new QRCodeWriter();
@@ -40,7 +40,7 @@ final class QrHelper {
         }
     }
 
-    static String generateDataUri(String content, int size) {
+    public static String generateDataUri(String content, int size) {
         byte[] png = generatePng(content, size);
         if (png.length == 0) return "";
         return "data:image/png;base64," + Base64.getEncoder().encodeToString(png);

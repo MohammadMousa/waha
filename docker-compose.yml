@@ -36,6 +36,7 @@ services:
       MYFATOORAH_API_KEY: ${MYFATOORAH_API_KEY:-}
       MYFATOORAH_BASE_URL: ${MYFATOORAH_BASE_URL:-https://apitest.myfatoorah.com}
       MYFATOORAH_WEBHOOK_SECRET: ${MYFATOORAH_WEBHOOK_SECRET:-}
+      WAHA_PUBLIC_BASE_URL: ${WAHA_PUBLIC_BASE_URL:-http://localhost:8081}
     ports:
       - "8081:8080"
 

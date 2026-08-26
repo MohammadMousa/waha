@@ -1,5 +1,6 @@
 package com.waha.payment.stripe;
 
+import com.waha.common.InvalidRequestException;
 import com.waha.payment.PaymentSession;
 import com.waha.payment.PaymentStatus;
 import com.waha.payment.RedirectPaymentProvider;
@@ -56,6 +57,12 @@ public class StripeRedirectPaymentProvider implements RedirectPaymentProvider {
         try {
             Session session = Session.create(params);
             return new PaymentSession(session.getId(), session.getUrl());
+        } catch (com.stripe.exception.InvalidRequestException e) {
+            if ("amount_too_small".equals(e.getCode())) {
+                throw new InvalidRequestException(
+                    "The order total is too small for card payment. Please add more items or use another payment method.");
+            }
+            throw new InvalidRequestException("Stripe: " + e.getMessage());
         } catch (StripeException e) {
             throw new RuntimeException("Stripe session creation failed: " + e.getMessage(), e);
         }
