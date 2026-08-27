@@ -70,13 +70,13 @@ public class OrderRepository {
             .usingColumns("id", "order_id", "provider", "provider_reference", "redirect_url", "qr_data_uri", "expires_at");
     }
 
-    public record OrderPaymentInfo(String status, int version, BigDecimal totalAmount, String currency) {}
+    public record OrderPaymentInfo(String status, int version, BigDecimal totalAmount, String currency, long storeId) {}
 
     public OrderPaymentInfo getPaymentInfo(String orderId) {
         try {
             return jdbcTemplate.queryForObject(
-                "SELECT status, version, total_amount, currency FROM orders WHERE id = ?",
-                (rs, i) -> new OrderPaymentInfo(rs.getString("status"), rs.getInt("version"), rs.getBigDecimal("total_amount"), rs.getString("currency")),
+                "SELECT status, version, total_amount, currency, store_id FROM orders WHERE id = ?",
+                (rs, i) -> new OrderPaymentInfo(rs.getString("status"), rs.getInt("version"), rs.getBigDecimal("total_amount"), rs.getString("currency"), rs.getLong("store_id")),
                 orderId
             );
         } catch (EmptyResultDataAccessException e) {
