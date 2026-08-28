@@ -17,10 +17,18 @@ public class CorsConfig implements WebMvcConfigurer {
 
     @Override
     public void addCorsMappings(CorsRegistry registry) {
+        String[] origins = allowedOrigins.split(",");
+        String[] methods = {"GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"};
         registry.addMapping("/api/**")
-            .allowedOriginPatterns(allowedOrigins.split(","))
-            .allowedMethods("GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS")
+            .allowedOriginPatterns(origins)
+            .allowedMethods(methods)
             .allowedHeaders("Authorization", "Content-Type", "Accept")
             .exposedHeaders("Authorization");
+        // Public resource serving — no auth headers needed, GET only.
+        registry.addMapping("/resource/**")
+            .allowedOriginPatterns(origins)
+            .allowedMethods("GET", "OPTIONS")
+            .allowedHeaders("If-None-Match")
+            .exposedHeaders("ETag", "Cache-Control");
     }
 }

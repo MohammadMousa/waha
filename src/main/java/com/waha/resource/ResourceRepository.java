@@ -81,6 +81,85 @@ public class ResourceRepository {
         return results.stream().findFirst();
     }
 
+    // ── Named resource library ─────────────────────────────────────────────────
+
+    public record DirectoryView(long id, String name) {}
+    public record AssetView(long id, String name, String mimeType, long sizeBytes, String sha256) {}
+
+    public Optional<String> getSystemProperty(String key) {
+        List<String> r = jdbcTemplate.query(
+            "SELECT value FROM system_properties WHERE `key` = ? LIMIT 1",
+            (rs, i) -> rs.getString("value"), key);
+        return r.stream().findFirst();
+    }
+
+    public Optional<Long> findStoreIdByName(String storeName) {
+        List<Long> r = jdbcTemplate.query(
+            "SELECT id FROM stores WHERE name = ? LIMIT 1",
+            (rs, i) -> rs.getLong("id"), storeName);
+        return r.stream().findFirst();
+    }
+
+    public Optional<Long> findDirectoryId(long storeId, String dirName) {
+        List<Long> r = jdbcTemplate.query(
+            "SELECT id FROM resource_directories WHERE store_id = ? AND name = ? LIMIT 1",
+            (rs, i) -> rs.getLong("id"), storeId, dirName);
+        return r.stream().findFirst();
+    }
+
+    public Optional<Long> findAssetResourceId(long storeId, long directoryId, String assetName) {
+        List<Long> r = jdbcTemplate.query(
+            "SELECT resource_id FROM resource_assets WHERE store_id = ? AND directory_id = ? AND name = ? LIMIT 1",
+            (rs, i) -> rs.getLong("resource_id"), storeId, directoryId, assetName);
+        return r.stream().findFirst();
+    }
+
+    public List<DirectoryView> listDirectories(long storeId) {
+        return jdbcTemplate.query(
+            "SELECT id, name FROM resource_directories WHERE store_id = ? ORDER BY name",
+            (rs, i) -> new DirectoryView(rs.getLong("id"), rs.getString("name")),
+            storeId);
+    }
+
+    public long createDirectory(long storeId, String name) {
+        KeyHolder kh = new GeneratedKeyHolder();
+        jdbcTemplate.update(con -> {
+            PreparedStatement ps = con.prepareStatement(
+                "INSERT INTO resource_directories (store_id, name) VALUES (?, ?)",
+                Statement.RETURN_GENERATED_KEYS);
+            ps.setLong(1, storeId);
+            ps.setString(2, name);
+            return ps;
+        }, kh);
+        return kh.getKey().longValue();
+    }
+
+    public List<AssetView> listAssets(long storeId, long directoryId) {
+        return jdbcTemplate.query(
+            "SELECT a.id, a.name, r.mime_type, r.size_bytes, r.sha256 " +
+            "FROM resource_assets a JOIN resources r ON r.id = a.resource_id " +
+            "WHERE a.store_id = ? AND a.directory_id = ? ORDER BY a.name",
+            (rs, i) -> new AssetView(rs.getLong("id"), rs.getString("name"),
+                rs.getString("mime_type"), rs.getLong("size_bytes"), rs.getString("sha256")),
+            storeId, directoryId);
+    }
+
+    public void upsertAsset(long storeId, long directoryId, String name, long resourceId) {
+        jdbcTemplate.update(
+            "INSERT INTO resource_assets (store_id, directory_id, name, resource_id) VALUES (?, ?, ?, ?) " +
+            "ON DUPLICATE KEY UPDATE resource_id = VALUES(resource_id)",
+            storeId, directoryId, name, resourceId);
+    }
+
+    public boolean deleteAsset(long storeId, long directoryId, String name) {
+        int rows = jdbcTemplate.update(
+            "DELETE FROM resource_assets WHERE store_id = ? AND directory_id = ? AND name = ?",
+            storeId, directoryId, name);
+        return rows > 0;
+    }
+
+    // ── Gallery ────────────────────────────────────────────────────────────────
+
     // Gallery images for a product, in sort_order. The avatar (product.image_resource_id)
     // is NOT included here - the caller decides whether to prepend it.
     public record GalleryItem(long resourceId, String mimeType, int sortOrder) {}
