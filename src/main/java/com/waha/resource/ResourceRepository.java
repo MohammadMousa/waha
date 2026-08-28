@@ -100,6 +100,13 @@ public class ResourceRepository {
         return r.stream().findFirst();
     }
 
+    public Optional<String> findStoreNameById(long storeId) {
+        List<String> r = jdbcTemplate.query(
+            "SELECT name FROM stores WHERE id = ? LIMIT 1",
+            (rs, i) -> rs.getString("name"), storeId);
+        return r.stream().findFirst();
+    }
+
     public Optional<Long> findDirectoryId(long storeId, String dirName) {
         List<Long> r = jdbcTemplate.query(
             "SELECT id FROM resource_directories WHERE store_id = ? AND name = ? LIMIT 1",
