@@ -3,7 +3,9 @@ package com.waha.invoice;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
+import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 @Repository
@@ -52,6 +54,61 @@ public class ReceiptInfoRepository {
             (rs, i) -> mapRow(rs)
         );
         return results.stream().findFirst();
+    }
+
+    public void upsert(long storeId, Map<String, Object> fields) {
+        boolean exists = !jdbcTemplate.query(
+            "SELECT 1 FROM receipt_info WHERE store_id = ?",
+            (rs, i) -> rs.getInt(1), storeId
+        ).isEmpty();
+
+        if (!exists) {
+            jdbcTemplate.update("INSERT INTO receipt_info (store_id) VALUES (?)", storeId);
+        }
+
+        List<String> setClauses = new ArrayList<>();
+        List<Object> params = new ArrayList<>();
+
+        String[][] mappings = {
+            {"nameAr", "name_ar"}, {"nameEn", "name_en"},
+            {"addressText", "address_text"}, {"vatNumber", "vat_number"},
+            {"crNumber", "cr_number"}, {"unpaidInvoiceTitle", "unpaid_invoice_title"},
+            {"paidInvoiceTitle", "paid_invoice_title"}
+        };
+        for (String[] pair : mappings) {
+            if (fields.containsKey(pair[0])) {
+                setClauses.add(pair[1] + " = ?");
+                Object v = fields.get(pair[0]);
+                params.add(v instanceof String s && s.isBlank() ? null : v);
+            }
+        }
+        if (fields.containsKey("logoResourceId")) {
+            setClauses.add("logo_resource_id = ?");
+            Object v = fields.get("logoResourceId");
+            params.add(v == null ? null : ((Number) v).longValue());
+        }
+
+        if (!setClauses.isEmpty()) {
+            params.add(storeId);
+            jdbcTemplate.update(
+                "UPDATE receipt_info SET " + String.join(", ", setClauses) + " WHERE store_id = ?",
+                params.toArray()
+            );
+        }
+    }
+
+    public Map<String, Object> toResponse(ReceiptInfo info) {
+        Map<String, Object> m = new java.util.LinkedHashMap<>();
+        m.put("storeId", info.storeId());
+        m.put("nameAr", info.nameAr());
+        m.put("nameEn", info.nameEn());
+        m.put("addressText", info.addressText());
+        m.put("vatNumber", info.vatNumber());
+        m.put("crNumber", info.crNumber());
+        m.put("logoResourceId", info.logoResourceId());
+        m.put("unpaidInvoiceTitle", info.unpaidInvoiceTitle());
+        m.put("paidInvoiceTitle", info.paidInvoiceTitle());
+        return m;
     }
 
     private ReceiptInfo mapRow(java.sql.ResultSet rs) throws java.sql.SQLException {

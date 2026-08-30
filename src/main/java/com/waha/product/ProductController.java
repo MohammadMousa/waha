@@ -4,6 +4,7 @@ import com.waha.auth.SessionService;
 import com.waha.common.ErrorResponse;
 import com.waha.product.dto.ProductListResponse;
 import com.waha.product.dto.ProductSyncResponse;
+import com.waha.resource.ResourceRepository;
 import com.waha.store.StoreRepository;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -14,7 +15,9 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.time.Instant;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 @RestController
@@ -27,11 +30,14 @@ public class ProductController {
     private final ProductRepository productRepository;
     private final StoreRepository storeRepository;
     private final SessionService sessionService;
+    private final ResourceRepository resourceRepository;
 
-    public ProductController(ProductRepository productRepository, StoreRepository storeRepository, SessionService sessionService) {
+    public ProductController(ProductRepository productRepository, StoreRepository storeRepository,
+                              SessionService sessionService, ResourceRepository resourceRepository) {
         this.productRepository = productRepository;
         this.storeRepository = storeRepository;
         this.sessionService = sessionService;
+        this.resourceRepository = resourceRepository;
     }
 
     // Discovery/browsing. storeId is optional - an explicit value still
@@ -69,9 +75,23 @@ public class ProductController {
     @GetMapping("/{id}")
     public ResponseEntity<?> getById(@PathVariable long id) {
         Optional<Product> product = productRepository.findByIds(List.of(id)).stream().findFirst();
-        return product
-            .<ResponseEntity<?>>map(ResponseEntity::ok)
-            .orElseGet(() -> ResponseEntity.status(404).body(new ErrorResponse("Product " + id + " not found")));
+        if (product.isEmpty()) return ResponseEntity.status(404).body(new ErrorResponse("Product " + id + " not found"));
+        // Include gallery image resource IDs inline so the client avoids a second round-trip.
+        List<Long> galleryIds = resourceRepository.findGalleryByProduct(id)
+            .stream().map(ResourceRepository.GalleryItem::resourceId).toList();
+        Map<String, Object> resp = new HashMap<>();
+        resp.put("id",              product.get().id());
+        resp.put("barcode",         product.get().barcode());
+        resp.put("name",            product.get().name());
+        resp.put("description",     product.get().description());
+        resp.put("price",           product.get().price());
+        resp.put("active",          product.get().active());
+        resp.put("scopeStoreId",    product.get().scopeStoreId());
+        resp.put("publicListed",    product.get().publicListed());
+        resp.put("categoryId",      product.get().categoryId());
+        resp.put("imageResourceId", product.get().imageResourceId());
+        resp.put("imageResourceIds", galleryIds);
+        return ResponseEntity.ok(resp);
     }
 
     // What the kiosk scanner calls on every scan. storeId now follows the

@@ -128,6 +128,58 @@ public class ResourceAdminController {
         ));
     }
 
+    @PatchMapping("/directories/{dir}/{name}/move")
+    public ResponseEntity<?> moveAsset(
+            @RequestHeader(value = "Authorization", required = false) String auth,
+            @PathVariable String store,
+            @PathVariable String dir,
+            @PathVariable String name,
+            @RequestBody Map<String, String> body) {
+        var storeId = resolveStore(store);
+        if (storeId == null) return storeNotFound(store);
+        sessionService.requirePermission(auth, Permission.EDIT_RESOURCES, storeId);
+
+        var fromDirId = resourceRepository.findDirectoryId(storeId, dir);
+        if (fromDirId.isEmpty()) return dirNotFound(store, dir);
+
+        String targetDirName = body.get("targetDir");
+        if (targetDirName == null || targetDirName.isBlank())
+            return ResponseEntity.badRequest().body(new ErrorResponse("targetDir is required"));
+
+        var toDirId = resourceRepository.findDirectoryId(storeId, targetDirName);
+        if (toDirId.isEmpty()) return dirNotFound(store, targetDirName);
+
+        if (fromDirId.get().equals(toDirId.get()))
+            return ResponseEntity.badRequest().body(new ErrorResponse("Source and target directory are the same"));
+
+        boolean moved = resourceRepository.moveAsset(storeId, fromDirId.get(), toDirId.get(), name);
+        if (!moved) return ResponseEntity.status(404).body(new ErrorResponse("Asset not found: " + name));
+        return ResponseEntity.ok().build();
+    }
+
+    @PatchMapping("/directories/{dir}/{name}/rename")
+    public ResponseEntity<?> renameAsset(
+            @RequestHeader(value = "Authorization", required = false) String auth,
+            @PathVariable String store,
+            @PathVariable String dir,
+            @PathVariable String name,
+            @RequestBody Map<String, String> body) {
+        var storeId = resolveStore(store);
+        if (storeId == null) return storeNotFound(store);
+        sessionService.requirePermission(auth, Permission.EDIT_RESOURCES, storeId);
+
+        var dirId = resourceRepository.findDirectoryId(storeId, dir);
+        if (dirId.isEmpty()) return dirNotFound(store, dir);
+
+        String newName = body.get("newName");
+        if (newName == null || newName.isBlank())
+            return ResponseEntity.badRequest().body(new ErrorResponse("newName is required"));
+
+        boolean renamed = resourceRepository.renameAsset(storeId, dirId.get(), name, newName.trim());
+        if (!renamed) return ResponseEntity.status(404).body(new ErrorResponse("Asset not found: " + name));
+        return ResponseEntity.ok().build();
+    }
+
     @DeleteMapping("/directories/{dir}/{name}")
     public ResponseEntity<?> deleteAsset(
             @RequestHeader(value = "Authorization", required = false) String auth,

@@ -66,11 +66,13 @@ public class StoreRepository {
     // filter by store_type/store_kind.
     public List<StoreSummary> findPublicStores() {
         return jdbcTemplate.query(
-            "SELECT id, name, display_name, currency FROM stores WHERE public = TRUE AND active = TRUE ORDER BY name",
+            "SELECT id, name, display_name, currency, image_resource_id FROM stores WHERE public = TRUE AND active = TRUE ORDER BY name",
             (rs, i) -> {
                 String rawJson = rs.getString("display_name");
                 JsonNode displayName = parseJsonOrNull(rawJson);
-                return new StoreSummary(rs.getLong("id"), rs.getString("name"), displayName, rs.getString("currency"));
+                long imgId = rs.getLong("image_resource_id");
+                Long imageResourceId = rs.wasNull() ? null : imgId;
+                return new StoreSummary(rs.getLong("id"), rs.getString("name"), displayName, rs.getString("currency"), imageResourceId);
             }
         );
     }
@@ -90,16 +92,18 @@ public class StoreRepository {
     public List<StoreSummary> findAdminStores(long rootStoreId) {
         return jdbcTemplate.query(
             "WITH RECURSIVE scope AS (" +
-            "  SELECT id, name, display_name, currency, parent_store_id" +
+            "  SELECT id, name, display_name, currency, image_resource_id, parent_store_id" +
             "  FROM stores WHERE id = ? AND active = TRUE" +
             "  UNION ALL" +
-            "  SELECT s.id, s.name, s.display_name, s.currency, s.parent_store_id" +
+            "  SELECT s.id, s.name, s.display_name, s.currency, s.image_resource_id, s.parent_store_id" +
             "  FROM stores s JOIN scope p ON s.parent_store_id = p.id WHERE s.active = TRUE" +
-            ") SELECT id, name, display_name, currency FROM scope ORDER BY id",
+            ") SELECT id, name, display_name, currency, image_resource_id FROM scope ORDER BY id",
             (rs, i) -> {
                 String rawJson = rs.getString("display_name");
                 JsonNode displayName = parseJsonOrNull(rawJson);
-                return new StoreSummary(rs.getLong("id"), rs.getString("name"), displayName, rs.getString("currency"));
+                long imgId = rs.getLong("image_resource_id");
+                Long imageResourceId = rs.wasNull() ? null : imgId;
+                return new StoreSummary(rs.getLong("id"), rs.getString("name"), displayName, rs.getString("currency"), imageResourceId);
             },
             rootStoreId
         );
@@ -143,6 +147,77 @@ public class StoreRepository {
             Integer.class, storeId
         );
         return count != null && count > 0;
+    }
+
+    public java.util.Optional<StoreSummary> findById(long storeId) {
+        List<StoreSummary> results = jdbcTemplate.query(
+            "SELECT id, name, display_name, currency, image_resource_id FROM stores WHERE id = ?",
+            (rs, i) -> {
+                JsonNode displayName = parseJsonOrNull(rs.getString("display_name"));
+                long imgId = rs.getLong("image_resource_id");
+                Long imageResourceId = rs.wasNull() ? null : imgId;
+                return new StoreSummary(rs.getLong("id"), rs.getString("name"), displayName,
+                    rs.getString("currency"), imageResourceId);
+            },
+            storeId
+        );
+        return results.stream().findFirst();
+    }
+
+    public record StoreAdminDetail(long id, String name, com.fasterxml.jackson.databind.JsonNode displayName,
+            String currency, Long imageResourceId, boolean active, boolean publicFlag) {}
+
+    public java.util.Optional<StoreAdminDetail> findByIdAdmin(long storeId) {
+        List<StoreAdminDetail> results = jdbcTemplate.query(
+            "SELECT id, name, display_name, currency, image_resource_id, active, `public` FROM stores WHERE id = ?",
+            (rs, i) -> {
+                com.fasterxml.jackson.databind.JsonNode dn = parseJsonOrNull(rs.getString("display_name"));
+                long imgId = rs.getLong("image_resource_id");
+                Long imageResourceId = rs.wasNull() ? null : imgId;
+                return new StoreAdminDetail(rs.getLong("id"), rs.getString("name"), dn,
+                    rs.getString("currency"), imageResourceId, rs.getBoolean("active"), rs.getBoolean("public"));
+            },
+            storeId
+        );
+        return results.stream().findFirst();
+    }
+
+    public void patch(long storeId, com.fasterxml.jackson.databind.JsonNode body) {
+        java.util.List<String> setClauses = new java.util.ArrayList<>();
+        java.util.List<Object> params = new java.util.ArrayList<>();
+
+        if (body.has("displayName")) {
+            setClauses.add("display_name = ?");
+            params.add(body.get("displayName").toString());
+        }
+        if (body.has("imageResourceId")) {
+            setClauses.add("image_resource_id = ?");
+            com.fasterxml.jackson.databind.JsonNode img = body.get("imageResourceId");
+            params.add(img.isNull() ? null : img.longValue());
+        }
+        if (body.has("name")) {
+            setClauses.add("name = ?");
+            params.add(body.get("name").asText());
+        }
+        if (body.has("currency")) {
+            setClauses.add("currency = ?");
+            params.add(body.get("currency").asText());
+        }
+        if (body.has("active")) {
+            setClauses.add("active = ?");
+            params.add(body.get("active").asBoolean());
+        }
+        if (body.has("public")) {
+            setClauses.add("`public` = ?");
+            params.add(body.get("public").asBoolean());
+        }
+
+        if (setClauses.isEmpty()) return;
+        params.add(storeId);
+        jdbcTemplate.update(
+            "UPDATE stores SET " + String.join(", ", setClauses) + " WHERE id = ?",
+            params.toArray()
+        );
     }
 
     // Returns the requesting store's own id followed by every ancestor, in

@@ -182,4 +182,37 @@ public class ResourceRepository {
             productId
         );
     }
+
+    public void addGalleryImage(long productId, long resourceId) {
+        int nextOrder = jdbcTemplate.queryForObject(
+            "SELECT COALESCE(MAX(sort_order), -1) + 1 FROM product_images WHERE product_id = ?",
+            Integer.class, productId);
+        jdbcTemplate.update(
+            "INSERT IGNORE INTO product_images (product_id, resource_id, sort_order) VALUES (?, ?, ?)",
+            productId, resourceId, nextOrder);
+    }
+
+    public boolean removeGalleryImage(long productId, long resourceId) {
+        int rows = jdbcTemplate.update(
+            "DELETE FROM product_images WHERE product_id = ? AND resource_id = ?",
+            productId, resourceId);
+        return rows > 0;
+    }
+
+    // Moves a named asset from one directory to another within the same store.
+    public boolean moveAsset(long storeId, long fromDirId, long toDirId, String name) {
+        int rows = jdbcTemplate.update(
+            "UPDATE resource_assets SET directory_id = ? " +
+            "WHERE store_id = ? AND directory_id = ? AND name = ?",
+            toDirId, storeId, fromDirId, name);
+        return rows > 0;
+    }
+
+    // Renames a named asset within the same directory.
+    public boolean renameAsset(long storeId, long directoryId, String oldName, String newName) {
+        int rows = jdbcTemplate.update(
+            "UPDATE resource_assets SET name = ? WHERE store_id = ? AND directory_id = ? AND name = ?",
+            newName, storeId, directoryId, oldName);
+        return rows > 0;
+    }
 }

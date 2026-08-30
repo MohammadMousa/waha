@@ -19,7 +19,7 @@ public class LandingController {
     private static final Set<String> VALID_KEYS = Set.of(
         "KIOSK_LANDING", "SHOPPING_LANDING", "CLIENT_LANDING", "ADMIN_LANDING"
     );
-    private static final long ROOT_STORE_ID = 0L;
+    private static final long ROOT_STORE_ID = 1L;
     private static final String PAGES_DIR = "pages";
 
     private final ResourceRepository resourceRepository;

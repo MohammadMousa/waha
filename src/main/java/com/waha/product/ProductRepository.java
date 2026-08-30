@@ -10,6 +10,7 @@ import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Timestamp;
 import java.time.Instant;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -120,6 +121,43 @@ public class ProductRepository {
             params, (rs, i) -> mapProduct(rs)
         );
         return results.stream().findFirst();
+    }
+
+    public java.util.Optional<Product> findById(long id) {
+        List<Product> results = jdbc.query(
+            "SELECT " + PRODUCT_COLS + " FROM products WHERE id = :id",
+            Map.of("id", id), (rs, i) -> mapProduct(rs)
+        );
+        return results.stream().findFirst();
+    }
+
+    public void patch(long id, com.fasterxml.jackson.databind.JsonNode body) {
+        List<String> setClauses = new ArrayList<>();
+        List<Object> params = new ArrayList<>();
+
+        if (body.has("name")) {
+            setClauses.add("name = ?");
+            params.add(body.get("name").toString());
+        }
+        if (body.has("description")) {
+            setClauses.add("description = ?");
+            JsonNode desc = body.get("description");
+            params.add(desc.isNull() ? null : desc.toString());
+        }
+        if (body.has("imageResourceId")) {
+            setClauses.add("image_resource_id = ?");
+            JsonNode img = body.get("imageResourceId");
+            params.add(img.isNull() ? null : img.longValue());
+        }
+
+        if (setClauses.isEmpty()) return;
+        params.add(id);
+
+        // NamedParameterJdbcTemplate wraps JdbcTemplate — use getJdbcTemplate() for plain ?-style.
+        jdbc.getJdbcTemplate().update(
+            "UPDATE products SET " + String.join(", ", setClauses) + " WHERE id = ?",
+            params.toArray()
+        );
     }
 
     // Used by OrderService to price order items server-side - the client
