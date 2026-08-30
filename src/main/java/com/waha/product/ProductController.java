@@ -76,9 +76,10 @@ public class ProductController {
     public ResponseEntity<?> getById(@PathVariable long id) {
         Optional<Product> product = productRepository.findByIds(List.of(id)).stream().findFirst();
         if (product.isEmpty()) return ResponseEntity.status(404).body(new ErrorResponse("Product " + id + " not found"));
-        // Include gallery image resource IDs inline so the client avoids a second round-trip.
+        // Include gallery image resource IDs and tags inline so the client avoids extra round-trips.
         List<Long> galleryIds = resourceRepository.findGalleryByProduct(id)
             .stream().map(ResourceRepository.GalleryItem::resourceId).toList();
+        List<String> tags = productRepository.findTagsByProduct(id);
         Map<String, Object> resp = new HashMap<>();
         resp.put("id",              product.get().id());
         resp.put("barcode",         product.get().barcode());
@@ -91,6 +92,7 @@ public class ProductController {
         resp.put("categoryId",      product.get().categoryId());
         resp.put("imageResourceId", product.get().imageResourceId());
         resp.put("imageResourceIds", galleryIds);
+        resp.put("tags",            tags);
         return ResponseEntity.ok(resp);
     }
 

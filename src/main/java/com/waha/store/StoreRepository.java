@@ -5,8 +5,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.waha.common.InvalidRequestException;
 import com.waha.store.dto.StoreSummary;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.support.GeneratedKeyHolder;
+import org.springframework.jdbc.support.KeyHolder;
 import org.springframework.stereotype.Repository;
 
+import java.sql.PreparedStatement;
+import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -180,6 +184,35 @@ public class StoreRepository {
             storeId
         );
         return results.stream().findFirst();
+    }
+
+    public long createStore(String name, String displayName, String currency, long parentStoreId) {
+        // Build path: parent's path + "/" + parentStoreId (or just parentStoreId if parent has no path)
+        List<String> parentPaths = jdbcTemplate.query(
+            "SELECT COALESCE(path, '') FROM stores WHERE id = ?",
+            (rs, i) -> rs.getString(1),
+            parentStoreId
+        );
+        String parentPath = parentPaths.isEmpty() ? "" : parentPaths.get(0);
+        String newPath = parentPath.isBlank()
+            ? String.valueOf(parentStoreId)
+            : parentPath + "/" + parentStoreId;
+
+        KeyHolder kh = new GeneratedKeyHolder();
+        jdbcTemplate.update(con -> {
+            PreparedStatement ps = con.prepareStatement(
+                "INSERT INTO stores (name, display_name, currency, parent_store_id, path, active, `public`)" +
+                " VALUES (?, ?, ?, ?, ?, TRUE, FALSE)",
+                Statement.RETURN_GENERATED_KEYS
+            );
+            ps.setString(1, name);
+            ps.setString(2, displayName);
+            ps.setString(3, currency);
+            ps.setLong(4, parentStoreId);
+            ps.setString(5, newPath);
+            return ps;
+        }, kh);
+        return kh.getKey().longValue();
     }
 
     public void patch(long storeId, com.fasterxml.jackson.databind.JsonNode body) {

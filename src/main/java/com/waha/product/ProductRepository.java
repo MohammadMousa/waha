@@ -131,6 +131,27 @@ public class ProductRepository {
         return results.stream().findFirst();
     }
 
+    public List<String> findTagsByProduct(long productId) {
+        return jdbc.queryForList(
+            "SELECT tag FROM product_tags WHERE product_id = :id ORDER BY tag",
+            Map.of("id", productId), String.class
+        );
+    }
+
+    public void syncTags(long productId, List<String> tags) {
+        jdbc.getJdbcTemplate().update("DELETE FROM product_tags WHERE product_id = ?", productId);
+        if (tags == null || tags.isEmpty()) return;
+        for (String tag : tags) {
+            String trimmed = tag == null ? null : tag.trim();
+            if (trimmed != null && !trimmed.isEmpty()) {
+                jdbc.getJdbcTemplate().update(
+                    "INSERT IGNORE INTO product_tags (product_id, tag) VALUES (?, ?)",
+                    productId, trimmed
+                );
+            }
+        }
+    }
+
     public void patch(long id, com.fasterxml.jackson.databind.JsonNode body) {
         List<String> setClauses = new ArrayList<>();
         List<Object> params = new ArrayList<>();
@@ -150,14 +171,23 @@ public class ProductRepository {
             params.add(img.isNull() ? null : img.longValue());
         }
 
-        if (setClauses.isEmpty()) return;
-        params.add(id);
+        if (!setClauses.isEmpty()) {
+            params.add(id);
+            // NamedParameterJdbcTemplate wraps JdbcTemplate — use getJdbcTemplate() for plain ?-style.
+            jdbc.getJdbcTemplate().update(
+                "UPDATE products SET " + String.join(", ", setClauses) + " WHERE id = ?",
+                params.toArray()
+            );
+        }
 
-        // NamedParameterJdbcTemplate wraps JdbcTemplate — use getJdbcTemplate() for plain ?-style.
-        jdbc.getJdbcTemplate().update(
-            "UPDATE products SET " + String.join(", ", setClauses) + " WHERE id = ?",
-            params.toArray()
-        );
+        if (body.has("tags")) {
+            JsonNode tagsNode = body.get("tags");
+            List<String> tags = new ArrayList<>();
+            if (tagsNode.isArray()) {
+                tagsNode.forEach(n -> tags.add(n.asText()));
+            }
+            syncTags(id, tags);
+        }
     }
 
     // Used by OrderService to price order items server-side - the client
@@ -226,7 +256,8 @@ public class ProductRepository {
             "  FROM products " +
             "  WHERE (scope_store_id IN (:scopeIds) OR scope_store_id IS NULL) " +
             "    AND `public` = TRUE " +
-            "    AND (LOWER(name->>'$.en') LIKE :q OR LOWER(name->>'$.ar') LIKE :q) " +
+            "    AND (LOWER(name->>'$.en') LIKE :q OR LOWER(name->>'$.ar') LIKE :q " +
+            "         OR EXISTS (SELECT 1 FROM product_tags pt WHERE pt.product_id = products.id AND LOWER(pt.tag) LIKE :q)) " +
             ") ranked " +
             "WHERE rn = 1 AND active = TRUE " +
             "ORDER BY name->>'$.en' " +
