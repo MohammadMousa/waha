@@ -34,16 +34,10 @@ public class StoreAdminController {
         if (!name.matches("[a-zA-Z0-9_\\-]+"))
             return ResponseEntity.badRequest().body(new ErrorResponse("name may only contain letters, digits, hyphens, and underscores"));
 
-        var session = sessionService.requireSession(auth);
-        var rootId = storeRepository.findAdminRootStore(session.userId());
-        if (rootId.isEmpty())
-            return ResponseEntity.status(403).body(new ErrorResponse("No admin store found for this user"));
+        sessionService.requirePermission(auth, Permission.MANAGE_STORES, 1L);
 
-        long parentStoreId = body.has("parentStoreId")
-            ? body.get("parentStoreId").asLong()
-            : rootId.get();
-
-        sessionService.requirePermission(auth, Permission.MANAGE_STORES, parentStoreId);
+        // organizationId: which org the new branch belongs to (defaults to company org=1)
+        long organizationId = body.has("organizationId") ? body.get("organizationId").asLong() : 1L;
 
         String displayName = body.has("displayName") ? body.get("displayName").toString() : null;
         String currency = body.has("currency") && !body.get("currency").asText().isBlank()
@@ -51,7 +45,7 @@ public class StoreAdminController {
             : null;
 
         try {
-            long id = storeRepository.createStore(name, displayName, currency, parentStoreId);
+            long id = storeRepository.createStore(name, displayName, currency, organizationId);
             return ResponseEntity.ok(Map.of("id", id));
         } catch (Exception e) {
             String msg = e.getMessage();

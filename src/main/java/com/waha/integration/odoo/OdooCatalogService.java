@@ -51,27 +51,18 @@ public class OdooCatalogService {
         this.resourceRepo = resourceRepo;
     }
 
-    // Returns how many products are visible to this store via scope chain
-    // (own + parent + root). Used to give meaningful feedback when pull returns 0
-    // because the catalog is already up to date via inheritance.
+    // Returns how many products are visible to this store (own scope + company scope + global).
     public int countVisibleProducts(Long storeId) {
         if (storeId == null) {
             return jdbc.queryForObject(
                 "SELECT COUNT(*) FROM products WHERE active = TRUE",
                 Map.of(), Integer.class);
         }
-        // Build scope chain: walk parent_store_id up to root, plus 0 for system-wide.
-        List<Long> chain = jdbc.query(
-            "WITH RECURSIVE chain AS (" +
-            "  SELECT id, parent_store_id FROM stores WHERE id = :id " +
-            "  UNION ALL " +
-            "  SELECT s.id, s.parent_store_id FROM stores s JOIN chain c ON s.id = c.parent_store_id" +
-            ") SELECT id FROM chain",
-            Map.of("id", storeId),
-            (rs, i) -> rs.getLong("id"));
-        if (chain.isEmpty()) return 0;
+        // Chain: branch itself + company anchor (1) + global (NULL)
+        List<Long> chain = storeId == 1L ? List.of(1L) : List.of(storeId, 1L);
         return jdbc.queryForObject(
-            "SELECT COUNT(*) FROM products WHERE active = TRUE AND scope_store_id IN (:chain)",
+            "SELECT COUNT(*) FROM products WHERE active = TRUE" +
+            " AND (scope_store_id IN (:chain) OR scope_store_id IS NULL)",
             Map.of("chain", chain), Integer.class);
     }
 
@@ -79,8 +70,6 @@ public class OdooCatalogService {
 
     public int pullCategories(Long storeId) {
         ExternalSystem sys = requireSystem();
-        // Always write to root so all children inherit the catalog.
-        Long rootStoreId = findRootStoreId(storeId);
         List<Object> domain = buildDomain(sys.lastCategorySyncAt());
         List<JsonNode> rows = odooClient.searchRead(
             sys.baseUrl(), sys.apiKey(), sys.username(),
@@ -92,7 +81,7 @@ public class OdooCatalogService {
         int count = 0;
         for (JsonNode row : rows) {
             try {
-                upsertCategory(sys.id(), row, rootStoreId);
+                upsertCategory(sys.id(), row);
                 count++;
             } catch (Exception e) {
                 log.warn("Skipping Odoo category id={}: {}", row.path("id").asLong(), e.getMessage());
@@ -100,11 +89,11 @@ public class OdooCatalogService {
         }
 
         if (count > 0) systemRepo.updateLastCategorySyncAt(sys.id(), Instant.now());
-        log.info("Odoo category pull: {} processed, rootStoreId={}", count, rootStoreId);
+        log.info("Odoo category pull: {} processed", count);
         return count;
     }
 
-    private void upsertCategory(long systemId, JsonNode row, Long storeId) {
+    private void upsertCategory(long systemId, JsonNode row) {
         long odooId   = row.path("id").asLong();
         String name   = row.path("name").asText();
         String catKey = slugify(name) + "_" + odooId;
@@ -121,19 +110,19 @@ public class OdooCatalogService {
             long localId = Long.parseLong(existing.get().localId());
             updateCategory(localId, nameJson, catKey);
         } else {
-            long localId = insertCategory(storeId, nameJson, catKey);
-            mappingRepo.save(systemId, "CATEGORY", String.valueOf(localId), String.valueOf(odooId), storeId);
+            long localId = insertCategory(nameJson, catKey);
+            mappingRepo.save(systemId, "CATEGORY", String.valueOf(localId), String.valueOf(odooId), null);
         }
     }
 
-    private long insertCategory(Long storeId, JsonNode name, String key) {
+    private long insertCategory(JsonNode name, String key) {
+        // scope_store_id=NULL → global scope, visible to all branches
         Map<String, Object> p = new HashMap<>();
-        p.put("storeId", storeId);
-        p.put("name",    name.toString());
-        p.put("key",     key);
+        p.put("name", name.toString());
+        p.put("key",  key);
         jdbc.update(
-            "INSERT INTO categories (scope_store_id, name, `key`, public, active, sort_order) " +
-            "VALUES (:storeId, :name, :key, TRUE, TRUE, 0)",
+            "INSERT INTO categories (name, `key`, public, active, sort_order) " +
+            "VALUES (:name, :key, TRUE, TRUE, 0)",
             p
         );
         return jdbc.queryForObject("SELECT LAST_INSERT_ID()", Map.of(), Long.class);
@@ -150,15 +139,7 @@ public class OdooCatalogService {
 
     public int pullProducts(Long storeId) {
         ExternalSystem sys = requireSystem();
-        // Always write to root so all children inherit the catalog.
-        Long rootStoreId = findRootStoreId(storeId);
         Instant since = sys.lastProductSyncAt();
-
-        // Look up scope_store_type once — required by the products CHECK constraint.
-        String storeType = rootStoreId != null
-            ? jdbc.queryForObject("SELECT store_type FROM stores WHERE id = :id",
-                Map.of("id", rootStoreId), String.class)
-            : null;
 
         int total = 0;
         int offset = 0;
@@ -179,7 +160,7 @@ public class OdooCatalogService {
 
             for (JsonNode row : rows) {
                 try {
-                    upsertProduct(sys.id(), row, rootStoreId, storeType);
+                    upsertProduct(sys.id(), row);
                     total++;
                 } catch (Exception e) {
                     log.warn("Skipping Odoo product id={}: {}", row.path("id").asLong(), e.getMessage());
@@ -191,11 +172,11 @@ public class OdooCatalogService {
         }
 
         if (total > 0) systemRepo.updateLastProductSyncAt(sys.id(), Instant.now());
-        log.info("Odoo product pull: {} processed, rootStoreId={}", total, rootStoreId);
+        log.info("Odoo product pull: {} processed", total);
         return total;
     }
 
-    private void upsertProduct(long systemId, JsonNode row, Long storeId, String storeType) throws Exception {
+    private void upsertProduct(long systemId, JsonNode row) throws Exception {
         long odooId    = row.path("id").asLong();
         String enName  = row.path("name").asText("");
         double price   = row.path("list_price").asDouble(0.0);
@@ -238,8 +219,8 @@ public class OdooCatalogService {
             localId = Long.parseLong(existing.get().localId());
             updateProduct(localId, nameJson, BigDecimal.valueOf(price), localCategoryId, active);
         } else {
-            localId = insertProduct(storeId, storeType, barcode, nameJson, BigDecimal.valueOf(price), localCategoryId, active);
-            mappingRepo.save(systemId, "PRODUCT", String.valueOf(localId), String.valueOf(odooId), storeId);
+            localId = insertProduct(barcode, nameJson, BigDecimal.valueOf(price), localCategoryId, active);
+            mappingRepo.save(systemId, "PRODUCT", String.valueOf(localId), String.valueOf(odooId), null);
         }
         if (imageBase64 != null) {
             storeProductImage(localId, odooId, imageBase64);
@@ -267,19 +248,18 @@ public class OdooCatalogService {
         return sb.toString();
     }
 
-    private long insertProduct(Long storeId, String storeType, String barcode, String nameJson,
-                                BigDecimal price, Long categoryId, boolean active) {
+    private long insertProduct(String barcode, String nameJson, BigDecimal price,
+                               Long categoryId, boolean active) {
         Map<String, Object> p = new HashMap<>();
-        p.put("storeId",    storeId);
-        p.put("storeType",  storeType);
         p.put("barcode",    barcode);
         p.put("name",       nameJson);
         p.put("price",      price);
         p.put("categoryId", categoryId);
         p.put("active",     active);
+        // scope_store_id=NULL → global/company scope, visible to all branches
         jdbc.update(
-            "INSERT INTO products (scope_store_id, scope_store_type, barcode, name, description, price, active, public, category_id, updated_at) " +
-            "VALUES (:storeId, :storeType, :barcode, :name, '{}', :price, :active, TRUE, :categoryId, NOW())",
+            "INSERT INTO products (barcode, name, description, price, active, public, category_id, updated_at) " +
+            "VALUES (:barcode, :name, '{}', :price, :active, TRUE, :categoryId, NOW())",
             p
         );
         return jdbc.queryForObject("SELECT LAST_INSERT_ID()", Map.of(), Long.class);
@@ -294,22 +274,6 @@ public class OdooCatalogService {
     }
 
     // ── Helpers ───────────────────────────────────────────────────────────────
-
-    // Walks parent_store_id up to the root (the store with no parent).
-    // Returns null if storeId is null (system-wide scope).
-    // Catalog pulls always write to root so all children inherit the products.
-    private Long findRootStoreId(Long storeId) {
-        if (storeId == null) return null;
-        List<Long> roots = jdbc.query(
-            "WITH RECURSIVE chain AS (" +
-            "  SELECT id, parent_store_id FROM stores WHERE id = :id " +
-            "  UNION ALL " +
-            "  SELECT s.id, s.parent_store_id FROM stores s JOIN chain c ON s.id = c.parent_store_id" +
-            ") SELECT id FROM chain WHERE parent_store_id IS NULL LIMIT 1",
-            Map.of("id", storeId),
-            (rs, i) -> rs.getLong("id"));
-        return roots.isEmpty() ? storeId : roots.get(0);
-    }
 
     private ExternalSystem requireSystem() {
         return systemRepo.findByName(SYSTEM_NAME)

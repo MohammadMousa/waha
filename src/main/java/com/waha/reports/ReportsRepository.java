@@ -22,7 +22,7 @@ public class ReportsRepository {
 
     public List<Map<String, Object>> getAllStores() {
         return namedJdbc.queryForList(
-            "SELECT id, name FROM stores WHERE store_type = 'CHILD' AND active = TRUE ORDER BY name",
+            "SELECT id, name FROM stores WHERE public = TRUE AND active = TRUE ORDER BY name",
             Map.of()
         );
     }

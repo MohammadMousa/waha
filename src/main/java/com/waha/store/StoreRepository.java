@@ -64,10 +64,6 @@ public class StoreRepository {
         return props;
     }
 
-    // The store picker after login (see StoreController). `public` alone is
-    // the authoritative signal here (per its definition: never true for a
-    // PARENT grouping node or a WAREHOUSE) - no need to redundantly also
-    // filter by store_type/store_kind.
     public List<StoreSummary> findPublicStores() {
         return jdbcTemplate.query(
             "SELECT id, name, display_name, currency, image_resource_id FROM stores WHERE public = TRUE AND active = TRUE ORDER BY name",
@@ -90,18 +86,12 @@ public class StoreRepository {
         }
     }
 
-    // All active stores reachable downward from rootStoreId (itself + every
-    // descendant). Used by GET /api/stores/admin so admins can see their
-    // full store tree, including non-public grouping nodes.
+    // Returns all active stores visible to this admin: store 1 (company anchor)
+    // sees the full list; any branch sees only itself.
     public List<StoreSummary> findAdminStores(long rootStoreId) {
         return jdbcTemplate.query(
-            "WITH RECURSIVE scope AS (" +
-            "  SELECT id, name, display_name, currency, image_resource_id, parent_store_id" +
-            "  FROM stores WHERE id = ? AND active = TRUE" +
-            "  UNION ALL" +
-            "  SELECT s.id, s.name, s.display_name, s.currency, s.image_resource_id, s.parent_store_id" +
-            "  FROM stores s JOIN scope p ON s.parent_store_id = p.id WHERE s.active = TRUE" +
-            ") SELECT id, name, display_name, currency, image_resource_id FROM scope ORDER BY id",
+            "SELECT id, name, display_name, currency, image_resource_id FROM stores" +
+            " WHERE active = TRUE AND (? = 1 OR id = ?) ORDER BY id",
             (rs, i) -> {
                 String rawJson = rs.getString("display_name");
                 JsonNode displayName = parseJsonOrNull(rawJson);
@@ -109,20 +99,19 @@ public class StoreRepository {
                 Long imageResourceId = rs.wasNull() ? null : imgId;
                 return new StoreSummary(rs.getLong("id"), rs.getString("name"), displayName, rs.getString("currency"), imageResourceId);
             },
-            rootStoreId
+            rootStoreId, rootStoreId
         );
     }
 
-    // The store where this user's highest admin role is directly assigned.
-    // "Highest" = shortest path (closest to tree root). Used to determine
-    // the root of their admin realm for GET /api/stores/admin.
+    // The highest-scoped store where this user has an admin role.
+    // store_id=1 (company anchor) sorts first and wins over any branch id.
     public Optional<Long> findAdminRootStore(long userId) {
         List<Long> results = jdbcTemplate.query(
             "SELECT ur.store_id FROM user_roles ur" +
             " JOIN roles r ON ur.role_id = r.id" +
             " JOIN stores s ON ur.store_id = s.id" +
-            " WHERE ur.user_id = ? AND r.name IN ('ADMIN', 'SUPER_ADMIN')" +
-            " ORDER BY CHAR_LENGTH(COALESCE(s.path, '')) ASC, ur.store_id ASC LIMIT 1",
+            " WHERE ur.user_id = ? AND r.name IN ('ADMIN', 'SUPER_ADMIN') AND s.active = TRUE" +
+            " ORDER BY ur.store_id ASC LIMIT 1",
             (rs, i) -> rs.getLong(1),
             userId
         );
@@ -186,30 +175,18 @@ public class StoreRepository {
         return results.stream().findFirst();
     }
 
-    public long createStore(String name, String displayName, String currency, long parentStoreId) {
-        // Build path: parent's path + "/" + parentStoreId (or just parentStoreId if parent has no path)
-        List<String> parentPaths = jdbcTemplate.query(
-            "SELECT COALESCE(path, '') FROM stores WHERE id = ?",
-            (rs, i) -> rs.getString(1),
-            parentStoreId
-        );
-        String parentPath = parentPaths.isEmpty() ? "" : parentPaths.get(0);
-        String newPath = parentPath.isBlank()
-            ? String.valueOf(parentStoreId)
-            : parentPath + "/" + parentStoreId;
-
+    public long createStore(String name, String displayName, String currency, long organizationId) {
         KeyHolder kh = new GeneratedKeyHolder();
         jdbcTemplate.update(con -> {
             PreparedStatement ps = con.prepareStatement(
-                "INSERT INTO stores (name, display_name, currency, parent_store_id, path, active, `public`)" +
-                " VALUES (?, ?, ?, ?, ?, TRUE, FALSE)",
+                "INSERT INTO stores (name, display_name, currency, organization_id, active, `public`)" +
+                " VALUES (?, ?, ?, ?, TRUE, FALSE)",
                 Statement.RETURN_GENERATED_KEYS
             );
             ps.setString(1, name);
             ps.setString(2, displayName);
             ps.setString(3, currency);
-            ps.setLong(4, parentStoreId);
-            ps.setString(5, newPath);
+            ps.setLong(4, organizationId);
             return ps;
         }, kh);
         return kh.getKey().longValue();
@@ -253,35 +230,18 @@ public class StoreRepository {
         );
     }
 
-    // Returns the requesting store's own id followed by every ancestor, in
-    // priority order (most specific first, tree root last) - e.g. for a
-    // branch under Root -> Company -> City: [branchId, cityId, companyId,
-    // rootId]. `path` holds ancestors root-to-immediate-parent (per
-    // V1__core_schema.sql), so this reverses it and prepends the store's
-    // own id. Used everywhere scope admissibility needs checking - product
-    // resolution, catalog sync - so there's exactly one place that
-    // understands how to walk the hierarchy, not one per caller.
+    // Returns the scope chain for this store: [storeId, ...org anchors up to company].
+    // Most specific first. Company anchor is store_id=1. Used by product resolution
+    // and permission checks — one place that understands the hierarchy, not one per caller.
     public List<Long> resolveScopeChain(long storeId) {
-        List<String> rows = jdbcTemplate.query(
-            "SELECT path FROM stores WHERE id = ?",
-            (rs, i) -> rs.getString("path"),
-            storeId
-        );
-        if (rows.isEmpty()) {
-            throw new InvalidRequestException("Store not found: " + storeId);
-        }
-        String path = rows.get(0);
+        boolean exists = Boolean.TRUE.equals(jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) > 0 FROM stores WHERE id = ?", Boolean.class, storeId
+        ));
+        if (!exists) throw new InvalidRequestException("Store not found: " + storeId);
 
         List<Long> chain = new ArrayList<>();
         chain.add(storeId);
-
-        if (path != null && !path.isBlank()) {
-            String[] ancestors = path.split("/");
-            for (int i = ancestors.length - 1; i >= 0; i--) {
-                chain.add(Long.parseLong(ancestors[i]));
-            }
-        }
-
+        if (storeId != 1L) chain.add(1L); // company anchor is always the terminal scope
         return chain;
     }
 }
