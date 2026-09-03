@@ -34,6 +34,20 @@ public class ProductAdminController {
         this.sessionService = sessionService;
     }
 
+    @PostMapping
+    public ResponseEntity<?> create(
+            @RequestHeader(value = "Authorization", required = false) String auth,
+            @RequestBody JsonNode body) {
+        sessionService.requirePermission(auth, Permission.EDIT_PRODUCTS, 0L);
+        long id = productRepository.create(body);
+        if (body.has("tags")) {
+            List<String> tags = new ArrayList<>();
+            body.get("tags").forEach(n -> tags.add(n.asText()));
+            productRepository.syncTags(id, tags);
+        }
+        return ResponseEntity.ok(Map.of("id", id));
+    }
+
     @PatchMapping("/{id}")
     public ResponseEntity<?> patch(
             @RequestHeader(value = "Authorization", required = false) String auth,

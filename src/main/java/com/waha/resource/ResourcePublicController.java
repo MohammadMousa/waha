@@ -62,7 +62,7 @@ public class ResourcePublicController {
         return ResponseEntity.ok()
             .header(HttpHeaders.ETAG, etag)
             .header(HttpHeaders.CACHE_CONTROL, "public, max-age=31536000, immutable")
-            .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"" + name + "\"")
+            .header(HttpHeaders.CONTENT_DISPOSITION, ResourceController.contentDisposition(name))
             .contentType(mediaType)
             .contentLength(resource.get().sizeBytes())
             .body(resource.get().data());

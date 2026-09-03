@@ -170,6 +170,19 @@ public class ProductRepository {
             JsonNode img = body.get("imageResourceId");
             params.add(img.isNull() ? null : img.longValue());
         }
+        if (body.has("categoryId")) {
+            setClauses.add("category_id = ?");
+            JsonNode cat = body.get("categoryId");
+            params.add(cat.isNull() ? null : cat.longValue());
+        }
+        if (body.has("price")) {
+            setClauses.add("price = ?");
+            params.add(body.get("price").decimalValue());
+        }
+        if (body.has("active")) {
+            setClauses.add("active = ?");
+            params.add(body.get("active").booleanValue());
+        }
 
         if (!setClauses.isEmpty()) {
             params.add(id);
@@ -188,6 +201,32 @@ public class ProductRepository {
             }
             syncTags(id, tags);
         }
+    }
+
+    public long create(JsonNode body) {
+        String name = body.has("name") ? body.get("name").toString() : "{\"en\":\"\"}";
+        String barcode = body.has("barcode") ? body.get("barcode").asText() : java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 20);
+        java.math.BigDecimal price = body.has("price") ? body.get("price").decimalValue() : java.math.BigDecimal.ZERO;
+        boolean active = !body.has("active") || body.get("active").booleanValue();
+        String description = body.has("description") ? body.get("description").toString() : null;
+        Long categoryId = (body.has("categoryId") && !body.get("categoryId").isNull()) ? body.get("categoryId").longValue() : null;
+        Long imageResourceId = (body.has("imageResourceId") && !body.get("imageResourceId").isNull()) ? body.get("imageResourceId").longValue() : null;
+
+        org.springframework.jdbc.support.GeneratedKeyHolder keyHolder = new org.springframework.jdbc.support.GeneratedKeyHolder();
+        jdbc.getJdbcTemplate().update(con -> {
+            java.sql.PreparedStatement ps = con.prepareStatement(
+                "INSERT INTO products (barcode, name, description, price, active, category_id, image_resource_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                new String[]{"id"});
+            ps.setString(1, barcode);
+            ps.setString(2, name);
+            ps.setString(3, description);
+            ps.setBigDecimal(4, price);
+            ps.setBoolean(5, active);
+            if (categoryId != null) ps.setLong(6, categoryId); else ps.setNull(6, java.sql.Types.BIGINT);
+            if (imageResourceId != null) ps.setLong(7, imageResourceId); else ps.setNull(7, java.sql.Types.BIGINT);
+            return ps;
+        }, keyHolder);
+        return keyHolder.getKey().longValue();
     }
 
     // Used by OrderService to price order items server-side - the client

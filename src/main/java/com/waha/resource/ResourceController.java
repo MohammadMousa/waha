@@ -100,10 +100,20 @@ public class ResourceController {
         return ResponseEntity.ok()
             .header(HttpHeaders.ETAG, etag)
             .header(HttpHeaders.CACHE_CONTROL, "public, max-age=31536000, immutable")
-            .header(HttpHeaders.CONTENT_DISPOSITION, "inline; filename=\"" + resource.get().filename() + "\"")
+            .header(HttpHeaders.CONTENT_DISPOSITION, contentDisposition(resource.get().filename()))
             .contentType(mediaType)
             .contentLength(resource.get().sizeBytes())
             .body(resource.get().data());
+    }
+
+    static String contentDisposition(String filename) {
+        try {
+            String encoded = java.net.URLEncoder.encode(filename, java.nio.charset.StandardCharsets.UTF_8)
+                .replace("+", "%20");
+            return "inline; filename=\"" + filename.replaceAll("[^\\x20-\\x7E]", "_") + "\"; filename*=UTF-8''" + encoded;
+        } catch (Exception e) {
+            return "inline; filename=\"file\"";
+        }
     }
 
     private static String sha256Hex(byte[] data) {

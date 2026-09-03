@@ -62,7 +62,7 @@ Cold start
         ├── Hit  → show WebView immediately (no network needed)
         └── Miss → show coded fallback screen
 
-After auth + store resolve (background)
+After auth + store resolve (background, once per session)
   └── GET /api/landing/{pageKey}
         ├── 404 → no page configured; keep coded fallback
         └── 200 → compare contentHash with LocalPrefs
@@ -71,6 +71,25 @@ After auth + store resolve (background)
 ```
 
 The `contentHash` in `LocalPrefs` is the sole freshness signal — the HTML file is only re-downloaded when the hash differs.
+
+### Image URL portability
+
+Landing page HTML is saved with **root-relative** image paths (e.g. `src="/resource/waha/pages-res/banner.jpg"`), never absolute URLs. `resolveAbsolutePaths()` rewrites them to the correct server origin at display time. This means the cached file works even if the server IP changes between when an admin saved the page and when the kiosk loads it.
+
+### Cache expiry — when does a re-check happen?
+
+The background update fires **once per session**, but "session" resets on any meaningful identity change:
+
+| Event | Re-check triggered? |
+|---|---|
+| Cold start (first auth + store ready) | Yes |
+| Store switched by admin | Yes |
+| Token expired → kiosk re-authenticates | Yes |
+| App stays running, same token, same store | No — cached version served |
+
+The local file is never deleted or invalidated — it is always shown immediately on startup regardless of age. The re-check simply gives the server a chance to replace it with a newer version if one exists. If the server is unreachable the local version keeps showing with no error.
+
+A published update will be picked up within one token lifetime at the latest (typically ~24 h for kiosk sessions), because token expiry → re-login → re-check. It may arrive sooner if the device restarts or the store switches before then.
 
 ### Normal-mode key selection
 
