@@ -21,30 +21,22 @@ public class CategoryRepository {
         this.objectMapper = objectMapper;
     }
 
-    // Returns categories visible to a store. Scope resolution is simple here
-    // (categories aren't ranked by specificity per barcode the way products
-    // are) - a category is visible to a store if it is global (scope_store_id
-    // IS NULL) or belongs to one of the stores in the requesting store's
-    // ancestor chain (including itself). The customer-facing browse endpoint
-    // only returns public=TRUE categories; an admin endpoint can drop that
-    // filter later without changing this query.
-    public List<Category> findForStore(List<Long> scopeChain, boolean publicOnly) {
+    public List<Category> findForStore(long companyId, boolean publicOnly) {
         String publicFilter = publicOnly ? " AND c.public = TRUE" : "";
         return jdbc.query(
-            "SELECT id, scope_store_id, name, public, active, sort_order, image_resource_id " +
+            "SELECT id, company_id, name, public, active, sort_order, image_resource_id " +
             "FROM categories c " +
-            "WHERE c.active = TRUE " +
-            "  AND (c.scope_store_id IS NULL OR c.scope_store_id IN (:scopeIds))" +
+            "WHERE c.active = TRUE AND c.company_id = :companyId" +
             publicFilter +
             " ORDER BY c.sort_order, c.id",
-            Map.of("scopeIds", scopeChain),
+            Map.of("companyId", companyId),
             (rs, i) -> mapCategory(rs)
         );
     }
 
     public Optional<Category> findById(long id) {
         List<Category> results = jdbc.query(
-            "SELECT id, scope_store_id, name, public, active, sort_order, image_resource_id " +
+            "SELECT id, company_id, name, public, active, sort_order, image_resource_id " +
             "FROM categories WHERE id = :id",
             Map.of("id", id), (rs, i) -> mapCategory(rs)
         );
@@ -74,13 +66,11 @@ public class CategoryRepository {
     }
 
     private Category mapCategory(java.sql.ResultSet rs) throws java.sql.SQLException {
-        long scopeId = rs.getLong("scope_store_id");
-        Long scopeStoreId = rs.wasNull() ? null : scopeId;
         long imgId = rs.getLong("image_resource_id");
         Long imageResourceId = rs.wasNull() ? null : imgId;
         return new Category(
             rs.getLong("id"),
-            scopeStoreId,
+            rs.getLong("company_id"),
             parseJsonOrNull(rs.getString("name")),
             rs.getBoolean("public"),
             rs.getBoolean("active"),

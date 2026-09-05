@@ -91,14 +91,14 @@ public class UserRepository {
             SELECT u.id, u.username, u.account_type, u.enabled,
                    u.first_name, u.last_name, u.phone, u.created_at,
                    (SELECT r.name FROM user_roles ur JOIN roles r ON r.id = ur.role_id
-                    WHERE ur.user_id = u.id AND ur.store_id != 0
-                    ORDER BY ur.store_id DESC LIMIT 1) AS role_name,
-                   (SELECT ur.store_id FROM user_roles ur
-                    WHERE ur.user_id = u.id AND ur.store_id != 0
-                    ORDER BY ur.store_id DESC LIMIT 1) AS store_id,
-                   (SELECT s.name FROM user_roles ur JOIN stores s ON s.id = ur.store_id
-                    WHERE ur.user_id = u.id AND ur.store_id != 0
-                    ORDER BY ur.store_id DESC LIMIT 1) AS store_name,
+                    WHERE ur.user_id = u.id AND ur.scope_id != 0
+                    ORDER BY ur.scope_id DESC LIMIT 1) AS role_name,
+                   (SELECT ur.scope_id FROM user_roles ur
+                    WHERE ur.user_id = u.id AND ur.scope_id != 0
+                    ORDER BY ur.scope_id DESC LIMIT 1) AS store_id,
+                   (SELECT s.name FROM user_roles ur JOIN stores s ON s.id = ur.scope_id
+                    WHERE ur.user_id = u.id AND ur.scope_id != 0
+                    ORDER BY ur.scope_id DESC LIMIT 1) AS store_name,
                    (SELECT MAX(created_at) FROM user_sessions WHERE user_id = u.id) AS last_login_at
             FROM users u
             WHERE (:accountType IS NULL OR u.account_type = :accountType)

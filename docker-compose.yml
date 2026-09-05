@@ -16,6 +16,7 @@ services:
       retries: 10
 
   waha:
+    container_name: waha
     build:
       context: .
       dockerfile: Dockerfile

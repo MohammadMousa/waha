@@ -36,8 +36,8 @@ public class StoreAdminController {
 
         sessionService.requirePermission(auth, Permission.MANAGE_STORES, 1L);
 
-        // organizationId: which org the new branch belongs to (defaults to company org=1)
-        long organizationId = body.has("organizationId") ? body.get("organizationId").asLong() : 1L;
+        Long branchGroupId = (body.has("branchGroupId") && !body.get("branchGroupId").isNull())
+            ? body.get("branchGroupId").asLong() : null;
 
         String displayName = body.has("displayName") ? body.get("displayName").toString() : null;
         String currency = body.has("currency") && !body.get("currency").asText().isBlank()
@@ -45,7 +45,7 @@ public class StoreAdminController {
             : null;
 
         try {
-            long id = storeRepository.createStore(name, displayName, currency, organizationId);
+            long id = storeRepository.createStore(name, displayName, currency, branchGroupId);
             return ResponseEntity.ok(Map.of("id", id));
         } catch (Exception e) {
             String msg = e.getMessage();

@@ -60,7 +60,7 @@ public class ProductAdminController {
         }
         Product product = opt.get();
 
-        long permStoreId = product.scopeStoreId() != null ? product.scopeStoreId() : ROOT_STORE_ID;
+        long permStoreId = product.companyId();
         sessionService.requirePermission(auth, Permission.EDIT_PRODUCTS, permStoreId);
 
         productRepository.patch(id, body);
@@ -77,7 +77,7 @@ public class ProductAdminController {
         Optional<Product> opt = productRepository.findById(id);
         if (opt.isEmpty()) return ResponseEntity.status(404).body(new ErrorResponse("Product not found"));
         Product product = opt.get();
-        long permStoreId = product.scopeStoreId() != null ? product.scopeStoreId() : ROOT_STORE_ID;
+        long permStoreId = product.companyId();
         sessionService.requirePermission(auth, Permission.EDIT_PRODUCTS, permStoreId);
 
         Object raw = body.get("resourceId");
@@ -95,7 +95,7 @@ public class ProductAdminController {
         Optional<Product> opt = productRepository.findById(id);
         if (opt.isEmpty()) return ResponseEntity.status(404).body(new ErrorResponse("Product not found"));
         Product product = opt.get();
-        long permStoreId = product.scopeStoreId() != null ? product.scopeStoreId() : ROOT_STORE_ID;
+        long permStoreId = product.companyId();
         sessionService.requirePermission(auth, Permission.EDIT_PRODUCTS, permStoreId);
 
         resourceRepository.removeGalleryImage(id, resourceId);

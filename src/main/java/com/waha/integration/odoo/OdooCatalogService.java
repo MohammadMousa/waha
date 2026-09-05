@@ -51,24 +51,15 @@ public class OdooCatalogService {
         this.resourceRepo = resourceRepo;
     }
 
-    // Returns how many products are visible to this store (own scope + company scope + global).
-    public int countVisibleProducts(Long storeId) {
-        if (storeId == null) {
-            return jdbc.queryForObject(
-                "SELECT COUNT(*) FROM products WHERE active = TRUE",
-                Map.of(), Integer.class);
-        }
-        // Chain: branch itself + company anchor (1) + global (NULL)
-        List<Long> chain = storeId == 1L ? List.of(1L) : List.of(storeId, 1L);
+    public int countVisibleProducts(long companyId) {
         return jdbc.queryForObject(
-            "SELECT COUNT(*) FROM products WHERE active = TRUE" +
-            " AND (scope_store_id IN (:chain) OR scope_store_id IS NULL)",
-            Map.of("chain", chain), Integer.class);
+            "SELECT COUNT(*) FROM products WHERE active = TRUE AND company_id = :companyId",
+            Map.of("companyId", companyId), Integer.class);
     }
 
     // ── Category pull ─────────────────────────────────────────────────────────
 
-    public int pullCategories(Long storeId) {
+    public int pullCategories() {
         ExternalSystem sys = requireSystem();
         List<Object> domain = buildDomain(sys.lastCategorySyncAt());
         List<JsonNode> rows = odooClient.searchRead(
@@ -116,13 +107,12 @@ public class OdooCatalogService {
     }
 
     private long insertCategory(JsonNode name, String key) {
-        // scope_store_id=NULL → global scope, visible to all branches
         Map<String, Object> p = new HashMap<>();
         p.put("name", name.toString());
         p.put("key",  key);
         jdbc.update(
-            "INSERT INTO categories (name, `key`, public, active, sort_order) " +
-            "VALUES (:name, :key, TRUE, TRUE, 0)",
+            "INSERT INTO categories (name, `key`, public, active, sort_order, company_id) " +
+            "VALUES (:name, :key, TRUE, TRUE, 0, 1)",
             p
         );
         return jdbc.queryForObject("SELECT LAST_INSERT_ID()", Map.of(), Long.class);
@@ -137,7 +127,7 @@ public class OdooCatalogService {
 
     // ── Product pull ──────────────────────────────────────────────────────────
 
-    public int pullProducts(Long storeId) {
+    public int pullProducts() {
         ExternalSystem sys = requireSystem();
         Instant since = sys.lastProductSyncAt();
 
@@ -182,15 +172,12 @@ public class OdooCatalogService {
         double price   = row.path("list_price").asDouble(0.0);
         boolean active = row.path("active").asBoolean(true);
 
-        // Barcode: Odoo returns false/boolean when not set — fall back to ODOO_{id}.
         String barcode = "ODOO_" + odooId;
         JsonNode bcNode = row.path("barcode");
         if (bcNode.isTextual() && !bcNode.asText().isBlank()) {
             barcode = bcNode.asText();
         }
 
-        // categ_id: JSON-RPC returns [odooId,"Name"], XML-RPC parser returns the first
-        // <int> it finds inside the member → stored as a numeric node, not an array.
         Long localCategoryId = null;
         JsonNode categNode = row.path("categ_id");
         long odooCatId = 0;
@@ -206,7 +193,6 @@ public class OdooCatalogService {
 
         String nameJson = "{\"en\":\"" + escapeJson(enName) + "\",\"ar\":\"" + escapeJson(enName) + "\"}";
 
-        // image_512: base64 string when Odoo product has an image, boolean false otherwise.
         String imageBase64 = null;
         JsonNode imgNode = row.path("image_512");
         if (imgNode.isTextual() && !imgNode.asText().isEmpty()) {
@@ -256,10 +242,9 @@ public class OdooCatalogService {
         p.put("price",      price);
         p.put("categoryId", categoryId);
         p.put("active",     active);
-        // scope_store_id=NULL → global/company scope, visible to all branches
         jdbc.update(
-            "INSERT INTO products (barcode, name, description, price, active, public, category_id, updated_at) " +
-            "VALUES (:barcode, :name, '{}', :price, :active, TRUE, :categoryId, NOW())",
+            "INSERT INTO products (barcode, name, description, price, active, public, company_id, category_id, updated_at) " +
+            "VALUES (:barcode, :name, '{}', :price, :active, TRUE, 1, :categoryId, NOW())",
             p
         );
         return jdbc.queryForObject("SELECT LAST_INSERT_ID()", Map.of(), Long.class);
@@ -281,7 +266,6 @@ public class OdooCatalogService {
             .orElseThrow(() -> new OdooException("Odoo integration is not configured or disabled"));
     }
 
-    // Incremental domain: if since != null, only fetch records changed after it.
     private List<Object> buildDomain(Instant since) {
         if (since == null) return List.of();
         return List.of(List.of("write_date", ">", ODOO_TS.format(since)));

@@ -9,27 +9,27 @@ import java.util.List;
 import java.util.Map;
 
 @RestController
-@RequestMapping("/api/organizations")
-public class OrganizationController {
+@RequestMapping("/api/branch-groups")
+public class BranchGroupController {
 
     private final NamedParameterJdbcTemplate jdbc;
     private final SessionService sessionService;
 
-    public OrganizationController(NamedParameterJdbcTemplate jdbc, SessionService sessionService) {
+    public BranchGroupController(NamedParameterJdbcTemplate jdbc, SessionService sessionService) {
         this.jdbc = jdbc;
         this.sessionService = sessionService;
     }
 
-    public record OrgSummary(long id, String name) {}
+    public record BranchGroupSummary(long id, String name, long organizationId) {}
 
     @GetMapping
-    public List<OrgSummary> list(
+    public List<BranchGroupSummary> list(
             @RequestHeader(value = "Authorization", required = false) String auth) {
         sessionService.requirePermission(auth, Permission.MANAGE_STORES, 1L);
         return jdbc.query(
-            "SELECT id, name FROM organizations ORDER BY id",
+            "SELECT id, name, organization_id FROM branch_groups ORDER BY id",
             Map.of(),
-            (rs, i) -> new OrgSummary(rs.getLong("id"), rs.getString("name"))
+            (rs, i) -> new BranchGroupSummary(rs.getLong("id"), rs.getString("name"), rs.getLong("organization_id"))
         );
     }
 }

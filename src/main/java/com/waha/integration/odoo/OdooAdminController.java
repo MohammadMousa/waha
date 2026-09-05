@@ -52,14 +52,14 @@ public class OdooAdminController {
         ExternalSystem s = sys.get();
         // A store is an "inherited" consumer if it is not the integration owner.
         // Owners configure the integration and pull catalog; children push orders only.
-        boolean inherited = s.ownerStoreId() != null
+        boolean inherited = s.ownerOrganizationId() != null
             && storeId != null
-            && !s.ownerStoreId().equals(storeId);
+            && !s.ownerOrganizationId().equals(storeId);
         Map<String, Integer> queueStats = systemRepo.queueStats(s.id());
         Map<String, Object> body = new java.util.HashMap<>();
-        body.put("configured",          true);
-        body.put("inherited",           inherited);
-        body.put("ownerStoreId",        s.ownerStoreId());
+        body.put("configured",             true);
+        body.put("inherited",              inherited);
+        body.put("ownerOrganizationId",    s.ownerOrganizationId());
         body.put("enabled",             s.enabled());
         body.put("baseUrl",             s.baseUrl()            != null ? s.baseUrl()            : "");
         body.put("username",            s.username()           != null ? s.username()           : "");
@@ -94,8 +94,9 @@ public class OdooAdminController {
         String username         = request.username()         != null && !request.username().isBlank()         ? request.username().strip()         : null;
         String customerOverride = request.customerOverride() != null && !request.customerOverride().isBlank() ? request.customerOverride().strip() : null;
         // The store that saves the integration becomes its owner (set once, never overwritten).
-        Long ownerStoreId = storeId;
-        ExternalSystem sys = systemRepo.upsert("ODOO", request.baseUrl().strip(), apiKey, username, customerOverride, ownerStoreId);
+        // Ownership is at the organization level; use 1L (the company) for single-tenant
+        Long ownerOrganizationId = 1L;
+        ExternalSystem sys = systemRepo.upsert("ODOO", request.baseUrl().strip(), apiKey, username, customerOverride, ownerOrganizationId);
         // Reset cached partner so next order uses the new override.
         orderSyncService.resetPartnerCache();
         return ResponseEntity.ok(Map.of("id", sys.id(), "name", sys.name(), "enabled", sys.enabled()));
@@ -106,12 +107,12 @@ public class OdooAdminController {
     // reserved for the owner so catalog writes always land at the correct root.
     private void requireOwner(Long storeId) {
         systemRepo.findByName("ODOO").ifPresent(sys -> {
-            if (sys.ownerStoreId() != null && storeId != null
-                    && !sys.ownerStoreId().equals(storeId)) {
+            if (sys.ownerOrganizationId() != null && storeId != null
+                    && !sys.ownerOrganizationId().equals(storeId)) {
                 throw new ForbiddenException(
                     "Catalog pull is not allowed from this store. " +
-                    "This store inherits the Odoo integration from store " + sys.ownerStoreId() +
-                    ". Switch to the owner store to pull.");
+                    "This store inherits the Odoo integration from organization " + sys.ownerOrganizationId() +
+                    ". Switch to the owner organization to pull.");
             }
         });
     }
@@ -131,7 +132,7 @@ public class OdooAdminController {
 
         try {
             requireOwner(storeId);
-            int count = catalogService.pullCategories(storeId);
+            int count = catalogService.pullCategories();
             return ResponseEntity.ok(Map.of("pulled", count, "entityType", "CATEGORY"));
         } catch (OdooException e) {
             return ResponseEntity.status(502).body(new ErrorResponse("Odoo error: " + e.getMessage()));
@@ -155,8 +156,8 @@ public class OdooAdminController {
 
         try {
             requireOwner(storeId);
-            int pulled  = catalogService.pullProducts(storeId);
-            int visible = catalogService.countVisibleProducts(storeId);
+            int pulled  = catalogService.pullProducts();
+            int visible = catalogService.countVisibleProducts(1L);
             Map<String, Object> body = new java.util.HashMap<>();
             body.put("pulled",     pulled);
             body.put("visible",    visible);

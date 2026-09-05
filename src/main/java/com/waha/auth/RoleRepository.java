@@ -19,23 +19,20 @@ public class RoleRepository {
         this.jdbcTemplate = jdbcTemplate;
         this.userRolesInsert = new SimpleJdbcInsert(jdbcTemplate)
             .withTableName("user_roles")
-            .usingColumns("user_id", "role_id", "store_id");
+            .usingColumns("user_id", "role_id", "scope_id");
     }
 
-    // Returns the most specific role for userId at the given store chain
-    // (chain should end with 0 for system-wide coverage).
-    // "Most specific" = earliest match in the chain (branch beats region beats root).
-    public Role resolveRole(long userId, List<Long> storeChain) {
-        if (storeChain.isEmpty()) return Role.ANONYMOUS;
+    public Role resolveRole(long userId, List<Long> scopeChain) {
+        if (scopeChain.isEmpty()) return Role.ANONYMOUS;
 
-        String inClause = storeChain.stream().map(String::valueOf).collect(Collectors.joining(","));
-        String fieldList = storeChain.stream().map(String::valueOf).collect(Collectors.joining(","));
+        String inClause = scopeChain.stream().map(String::valueOf).collect(Collectors.joining(","));
+        String fieldList = scopeChain.stream().map(String::valueOf).collect(Collectors.joining(","));
 
         List<String> results = jdbcTemplate.query(
             "SELECT r.name FROM user_roles ur " +
             "JOIN roles r ON ur.role_id = r.id " +
-            "WHERE ur.user_id = ? AND ur.store_id IN (" + inClause + ") " +
-            "ORDER BY FIELD(ur.store_id, " + fieldList + ") " +
+            "WHERE ur.user_id = ? AND ur.scope_id IN (" + inClause + ") " +
+            "ORDER BY FIELD(ur.scope_id, " + fieldList + ") " +
             "LIMIT 1",
             (rs, i) -> rs.getString("name"),
             userId
@@ -49,25 +46,24 @@ public class RoleRepository {
         }
     }
 
-    // Returns the resolved permission name strings for a user at a store chain.
-    public Set<String> resolvePermissions(long userId, List<Long> storeChain) {
-        Role role = resolveRole(userId, storeChain);
+    public Set<String> resolvePermissions(long userId, List<Long> scopeChain) {
+        Role role = resolveRole(userId, scopeChain);
         return Permission.BY_ROLE.getOrDefault(role, Set.of())
             .stream().map(Enum::name).collect(Collectors.toSet());
     }
 
-    public void assignRole(long userId, Role role, long storeId) {
+    public void assignRole(long userId, Role role, long scopeId) {
         Long roleId = jdbcTemplate.queryForObject(
             "SELECT id FROM roles WHERE name = ?", Long.class, role.name());
         if (roleId == null) throw new IllegalStateException("Role not found: " + role);
-        userRolesInsert.execute(Map.of("user_id", userId, "role_id", roleId, "store_id", storeId));
+        userRolesInsert.execute(Map.of("user_id", userId, "role_id", roleId, "scope_id", scopeId));
     }
 
-    public void removeRole(long userId, Role role, long storeId) {
+    public void removeRole(long userId, Role role, long scopeId) {
         jdbcTemplate.update(
             "DELETE ur FROM user_roles ur JOIN roles r ON ur.role_id = r.id " +
-            "WHERE ur.user_id = ? AND r.name = ? AND ur.store_id = ?",
-            userId, role.name(), storeId
+            "WHERE ur.user_id = ? AND r.name = ? AND ur.scope_id = ?",
+            userId, role.name(), scopeId
         );
     }
 }

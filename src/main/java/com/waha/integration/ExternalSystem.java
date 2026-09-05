@@ -9,7 +9,7 @@ public record ExternalSystem(
     String apiKey,
     String username,
     String customerOverride,
-    Long ownerStoreId,
+    Long ownerOrganizationId,
     boolean enabled,
     Instant lastCategorySyncAt,
     Instant lastProductSyncAt,

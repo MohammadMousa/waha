@@ -33,7 +33,7 @@ public class CategoryAdminController {
         Category cat = opt.get();
 
         // Permission is checked against the category's own store, or root store for globals.
-        long permStoreId = cat.scopeStoreId() != null ? cat.scopeStoreId() : 0L;
+        long permStoreId = cat.companyId();
         sessionService.requirePermission(auth, Permission.MANAGE_CATEGORIES, permStoreId);
 
         categoryRepository.patch(id, body);

@@ -61,8 +61,8 @@ public class ProductController {
         }
 
         int cappedSize = Math.min(Math.max(size, 1), MAX_PAGE_SIZE);
-        List<Long> scopeChain = storeRepository.resolveScopeChain(resolvedStoreId);
-        var result = productRepository.browseByStore(scopeChain, categoryId, page, cappedSize);
+        long companyId = storeRepository.findCompanyId(resolvedStoreId);
+        var result = productRepository.browseByStore(companyId, categoryId, page, cappedSize);
         return ResponseEntity.ok(new ProductListResponse(result.products(), page, cappedSize, result.hasMore()));
     }
 
@@ -87,7 +87,7 @@ public class ProductController {
         resp.put("description",     product.get().description());
         resp.put("price",           product.get().price());
         resp.put("active",          product.get().active());
-        resp.put("scopeStoreId",    product.get().scopeStoreId());
+        resp.put("companyId",       product.get().companyId());
         resp.put("publicListed",    product.get().publicListed());
         resp.put("categoryId",      product.get().categoryId());
         resp.put("imageResourceId", product.get().imageResourceId());
@@ -96,20 +96,7 @@ public class ProductController {
         return ResponseEntity.ok(resp);
     }
 
-    // What the kiosk scanner calls on every scan. storeId now follows the
-    // same rule as browse above: explicit always wins, otherwise resolved
-    // from the session. Kiosk was originally built as a separate
-    // device-identity concept with no session at all - that assumption was
-    // wrong (kiosk uses a real logged-in account, per an operator's
-    // one-time device setup, just restricted to kiosk UI by the frontend),
-    // so this endpoint shouldn't be the one place that can never benefit
-    // from a session once that setup exists. Resolves different prices for
-    // the same barcode depending on which store is asking, walking that
-    // store's full ancestor chain (arbitrary depth, most specific wins -
-    // see StoreRepository.resolveScopeChain / ProductRepository).
-    // Deliberately does NOT check inventory quantity - a scanned barcode
-    // plus a physically-held item is sufficient evidence the product can
-    // be sold (product doc, section 4-6).
+    // Kiosk scanner endpoint. storeId: explicit wins, else resolved from session.
     @GetMapping("/barcode/{barcode}")
     public ResponseEntity<?> getByBarcode(@PathVariable String barcode,
                                            @RequestParam(required = false) Long storeId,
@@ -120,8 +107,8 @@ public class ProductController {
                 "storeId is required (pass it explicitly, or select a store first via POST /api/auth/store)"));
         }
 
-        List<Long> scopeChain = storeRepository.resolveScopeChain(resolvedStoreId);
-        Optional<Product> product = productRepository.resolveByBarcode(barcode, scopeChain);
+        long companyId = storeRepository.findCompanyId(resolvedStoreId);
+        Optional<Product> product = productRepository.resolveByBarcode(barcode, companyId);
 
         if (product.isEmpty()) {
             productRepository.recordScanMiss(barcode, resolvedStoreId);
@@ -150,8 +137,8 @@ public class ProductController {
                 "storeId is required (pass it explicitly, or select a store first via POST /api/auth/store)"));
         }
         int cappedSize = Math.min(Math.max(size, 1), MAX_PAGE_SIZE);
-        List<Long> scopeChain = storeRepository.resolveScopeChain(resolvedStoreId);
-        var result = productRepository.searchByStore(scopeChain, q.trim(), page, cappedSize);
+        long companyId = storeRepository.findCompanyId(resolvedStoreId);
+        var result = productRepository.searchByStore(companyId, q.trim(), page, cappedSize);
         return ResponseEntity.ok(new ProductListResponse(result.products(), page, cappedSize, result.hasMore()));
     }
 
@@ -171,8 +158,8 @@ public class ProductController {
                 "storeId is required (pass it explicitly, or select a store first via POST /api/auth/store)"));
         }
 
-        List<Long> scopeChain = storeRepository.resolveScopeChain(resolvedStoreId);
+        long companyId = storeRepository.findCompanyId(resolvedStoreId);
         Instant syncedAt = Instant.now();
-        return ResponseEntity.ok(new ProductSyncResponse(syncedAt, productRepository.resolveEffectiveCatalog(scopeChain, since)));
+        return ResponseEntity.ok(new ProductSyncResponse(syncedAt, productRepository.resolveEffectiveCatalog(companyId, since)));
     }
 }

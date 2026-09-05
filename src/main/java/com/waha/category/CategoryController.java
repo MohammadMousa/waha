@@ -38,8 +38,8 @@ public class CategoryController {
                 "storeId is required (pass it explicitly, or select a store first via POST /api/auth/store)"));
         }
 
-        List<Long> scopeChain = storeRepository.resolveScopeChain(resolvedStoreId);
-        List<Category> categories = categoryRepository.findForStore(scopeChain, true);
+        long companyId = storeRepository.findCompanyId(resolvedStoreId);
+        List<Category> categories = categoryRepository.findForStore(companyId, true);
         return ResponseEntity.ok(categories);
     }
 }

@@ -56,8 +56,10 @@ public class InvoiceController {
 
         try {
             OrderResponse order = orderService.getOrder(orderId);
-            List<Long> scopeChain = storeRepository.resolveScopeChain(order.storeId());
-            ReceiptInfo receiptInfo = receiptInfoRepository.findByStoreChain(scopeChain).orElse(null);
+            List<Long> storeChain = order.storeId() == 1L
+                ? List.of(1L)
+                : List.of(order.storeId(), 1L);
+            ReceiptInfo receiptInfo = receiptInfoRepository.findByStoreChain(storeChain).orElse(null);
             return ResponseEntity.ok(InvoiceHtmlRenderer.render(order, receiptInfo, ref, lang));
         } catch (OrderNotFoundException e) {
             return ResponseEntity.status(404).body("<!DOCTYPE html><html><body><h1>Invoice not found</h1></body></html>");
@@ -70,8 +72,10 @@ public class InvoiceController {
                                        @RequestParam(defaultValue = "en") String lang) {
         try {
             OrderResponse order = orderService.getOrder(orderId);
-            List<Long> scopeChain = storeRepository.resolveScopeChain(order.storeId());
-            ReceiptInfo receiptInfo = receiptInfoRepository.findByStoreChain(scopeChain).orElse(null);
+            List<Long> storeChain = order.storeId() == 1L
+                ? List.of(1L)
+                : List.of(order.storeId(), 1L);
+            ReceiptInfo receiptInfo = receiptInfoRepository.findByStoreChain(storeChain).orElse(null);
             byte[] pdfBytes = InvoicePdfRenderer.render(order, receiptInfo, lang);
             String filename = "invoice-" + (order.displayId() != null ? order.displayId() : orderId) + ".pdf";
             return ResponseEntity.ok()
