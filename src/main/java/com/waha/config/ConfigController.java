@@ -19,13 +19,13 @@ public class ConfigController {
         this.sessionService = sessionService;
     }
 
-    // Public — no auth. Returns system_properties as key→value map.
+    // Public — no auth. Returns global (org=0) system_properties.
     @GetMapping
     public ResponseEntity<?> get() {
-        return ResponseEntity.ok(configService.findAllProperties());
+        return ResponseEntity.ok(configService.findAllProperties(0L));
     }
 
-    // Admin — requires MANAGE_STORES. Updates a system property.
+    // Admin — requires MANAGE_STORES. Updates a system property (always global, org=0).
     // Body: {"publicBaseUrl": "http://192.168.1.42:8081"}
     @PutMapping
     public ResponseEntity<?> update(
@@ -37,6 +37,6 @@ public class ConfigController {
         if (url != null) {
             configService.setPublicBaseUrl(url.trim());
         }
-        return ResponseEntity.ok(configService.findAllProperties());
+        return ResponseEntity.ok(configService.findAllProperties(0L));
     }
 }

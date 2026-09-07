@@ -11,6 +11,7 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 import java.util.Set;
+import java.util.Collections;
 
 @RestController
 @RequestMapping("/api/stores")
@@ -33,9 +34,9 @@ public class StoreController {
         return storeRepository.findPublicStores();
     }
 
-    // Admin store picker: returns all active stores in the caller's realm
-    // (the subtree rooted at the store where their admin role is assigned).
-    // Requires MANAGE_STORES permission.
+    // Admin store picker: returns all active stores within the caller's scope.
+    // Checks store-level permissions first (session store), then falls back to org-level
+    // for ORGANIZATION_OWNER (COMPANY scope, no specific store in session yet).
     @GetMapping("/admin")
     public ResponseEntity<?> listAdminStores(
             @RequestHeader(value = "Authorization", required = false) String authHeader) {
@@ -43,13 +44,13 @@ public class StoreController {
             UserSession session = sessionService.requireSession(authHeader);
             Set<String> perms = sessionService.resolvePermissions(session.userId(), session.storeId());
             if (!perms.contains(Permission.MANAGE_STORES.name())) {
-                return ResponseEntity.status(403).body(new ErrorResponse("Forbidden"));
+                perms = sessionService.resolvePermissionsForOrg(session.userId(), session.organizationId());
+                if (!perms.contains(Permission.MANAGE_STORES.name())) {
+                    return ResponseEntity.status(403).body(new ErrorResponse("Forbidden"));
+                }
             }
-            Long adminRoot = storeRepository.findAdminRootStore(session.userId()).orElse(null);
-            if (adminRoot == null) {
-                return ResponseEntity.status(403).body(new ErrorResponse("No admin store assignment found"));
-            }
-            return ResponseEntity.ok(storeRepository.findAdminStores(adminRoot));
+            List<StoreSummary> stores = storeRepository.findManageableStores(session.userId());
+            return ResponseEntity.ok(stores.isEmpty() ? Collections.emptyList() : stores);
         } catch (UnauthorizedException e) {
             return ResponseEntity.status(401).body(new ErrorResponse(e.getMessage()));
         }

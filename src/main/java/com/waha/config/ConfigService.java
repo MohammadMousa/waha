@@ -26,7 +26,7 @@ public class ConfigService {
         if (cached != null) return cached;
 
         String dbValue = jdbc.query(
-            "SELECT value FROM system_properties WHERE `key` = 'publicBaseUrl'",
+            "SELECT value FROM system_properties WHERE `key` = 'publicBaseUrl' AND organization_id = 0 LIMIT 1",
             rs -> rs.next() ? rs.getString(1) : null
         );
 
@@ -37,19 +37,21 @@ public class ConfigService {
 
     public void setPublicBaseUrl(String url) {
         jdbc.update(
-            "INSERT INTO system_properties (`key`, value, description) VALUES ('publicBaseUrl', ?, '') " +
+            "INSERT INTO system_properties (organization_id, `key`, value, description) VALUES (0, 'publicBaseUrl', ?, '') " +
             "ON DUPLICATE KEY UPDATE value = VALUES(value)",
             url
         );
         cachedPublicBaseUrl = (url != null && !url.isBlank()) ? url : envFallback;
     }
 
-    // Key-value GET for ConfigController — returns all system_properties.
-    public java.util.Map<String, String> findAllProperties() {
+    // Key-value GET for ConfigController — org-specific overrides win over global (org=0).
+    public java.util.Map<String, String> findAllProperties(long orgId) {
         java.util.Map<String, String> props = new java.util.LinkedHashMap<>();
-        jdbc.query("SELECT `key`, value FROM system_properties",
+        jdbc.query(
+            "SELECT `key`, value FROM system_properties WHERE organization_id IN (0, ?) ORDER BY organization_id DESC",
             (org.springframework.jdbc.core.RowCallbackHandler) rs ->
-                props.put(rs.getString("key"), rs.getString("value")));
+                props.putIfAbsent(rs.getString("key"), rs.getString("value")),
+            orgId);
         return props;
     }
 }

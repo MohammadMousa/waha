@@ -10,8 +10,10 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RestController;
 
-// Public — no auth. Serves named assets at /resource/{store}/{directory}/{name}.
-// Resolution: store name → store_id → directory_id → resource_id → bytes.
+// Public — no auth. Two URL shapes:
+//   /resource/{org}/{dir}/{name}           — org-level (global store)
+//   /resource/{org}/{branch}/{dir}/{name}  — branch-level
+// Resolution: org name → store_id (via org+branch or org's global store) → dir_id → resource.
 @RestController
 public class ResourcePublicController {
 
@@ -21,25 +23,49 @@ public class ResourcePublicController {
         this.resourceRepository = resourceRepository;
     }
 
-    @GetMapping("/resource/{store}/{directory}/{name}")
-    public ResponseEntity<?> serve(
-            @PathVariable String store,
+    @GetMapping("/resource/{org}/{directory}/{name}")
+    public ResponseEntity<?> serveOrgLevel(
+            @PathVariable String org,
             @PathVariable String directory,
             @PathVariable String name,
             @RequestHeader(value = HttpHeaders.IF_NONE_MATCH, required = false) String ifNoneMatch) {
 
-        var storeId = resourceRepository.findStoreIdByName(store);
-        if (storeId.isEmpty()) return notFound(store + "/" + directory + "/" + name);
+        var orgId = resourceRepository.findOrgIdBySlug(org);
+        if (orgId.isEmpty()) return notFound(org + "/" + directory + "/" + name);
 
-        var dirId = resourceRepository.findDirectoryId(storeId.get(), directory);
-        if (dirId.isEmpty()) return notFound(store + "/" + directory + "/" + name);
+        // Global store: store whose name matches the org name.
+        var storeId = resourceRepository.findStoreIdByOrgAndName(orgId.get(), org);
+        if (storeId.isEmpty()) return notFound(org + "/" + directory + "/" + name);
 
-        var resourceId = resourceRepository.findAssetResourceId(storeId.get(), dirId.get(), name);
-        if (resourceId.isEmpty()) return notFound(store + "/" + directory + "/" + name);
+        return serve(storeId.get(), directory, name, org + "/" + directory + "/" + name, ifNoneMatch);
+    }
 
-        // ETag check against metadata only — avoids blob read on cache hit.
+    @GetMapping("/resource/{org}/{branch}/{directory}/{name}")
+    public ResponseEntity<?> serveBranchLevel(
+            @PathVariable String org,
+            @PathVariable String branch,
+            @PathVariable String directory,
+            @PathVariable String name,
+            @RequestHeader(value = HttpHeaders.IF_NONE_MATCH, required = false) String ifNoneMatch) {
+
+        var orgId = resourceRepository.findOrgIdBySlug(org);
+        if (orgId.isEmpty()) return notFound(org + "/" + branch + "/" + directory + "/" + name);
+
+        var storeId = resourceRepository.findStoreIdByOrgAndName(orgId.get(), branch);
+        if (storeId.isEmpty()) return notFound(org + "/" + branch + "/" + directory + "/" + name);
+
+        return serve(storeId.get(), directory, name, org + "/" + branch + "/" + directory + "/" + name, ifNoneMatch);
+    }
+
+    private ResponseEntity<?> serve(long storeId, String directory, String name, String displayPath, String ifNoneMatch) {
+        var dirId = resourceRepository.findDirectoryId(storeId, directory);
+        if (dirId.isEmpty()) return notFound(displayPath);
+
+        var resourceId = resourceRepository.findAssetResourceId(dirId.get(), name);
+        if (resourceId.isEmpty()) return notFound(displayPath);
+
         var meta = resourceRepository.findMetaById(resourceId.get());
-        if (meta.isEmpty()) return notFound(store + "/" + directory + "/" + name);
+        if (meta.isEmpty()) return notFound(displayPath);
 
         String etag = "\"" + meta.get().sha256() + "\"";
         if (etag.equals(ifNoneMatch)) {
@@ -50,7 +76,7 @@ public class ResourcePublicController {
         }
 
         var resource = resourceRepository.findById(resourceId.get());
-        if (resource.isEmpty()) return notFound(store + "/" + directory + "/" + name);
+        if (resource.isEmpty()) return notFound(displayPath);
 
         MediaType mediaType;
         try {

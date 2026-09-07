@@ -1,12 +1,10 @@
 # Resource Management
 
-> **Status:** design phase — implementation not started.
-
 ---
 
 ## Overview
 
-Resources are binary or text assets (images, HTML pages, fonts, etc.) owned by a store and organized into directories. They are served directly from the database over a clean URL scheme, eliminating dependency on external file storage (Google Drive, cPanel, S3, etc.).
+Resources are binary or text assets (images, HTML pages, fonts, etc.) owned by a store and organized into directories. They are served directly from the database over a clean URL scheme, eliminating dependency on external file storage.
 
 Landing pages are not a separate concept — they are resources with `mime_type: text/html`, served and cached identically to images.
 
@@ -14,25 +12,57 @@ Landing pages are not a separate concept — they are resources with `mime_type:
 
 ## URL Scheme
 
+### Public (no auth)
+
 ```
-GET /resource/{store}/{directory}/{name}
+GET /resource/{org}/{directory}/{name}           ← org-level resource
+GET /resource/{org}/{branch}/{directory}/{name}  ← branch-level resource
 ```
+Notes:
+- {org} >> organization.slug
+- {branch} >> store.name
+- {directory} >> resource_directory.name
+- {name} >> resource.fileName [including ext]
+- public url is used only with pages [html] and inner images, not products/categories/stores avatar resources.
 
 | Segment | Example | Description |
 |---------|---------|-------------|
-| `store` | `waha` | URL-safe unique store identifier |
-| `directory` | `landing` | Admin-defined directory name (free-form, validated on creation) |
-| `name` | `banner.jpg` | Resource filename including extension |
+| `org` | `waha` | Organization slug (`organizations.name`) |
+| `branch` | `north-branch` | Branch store slug (`stores.name`), present only for branch-level resources |
+| `directory` | `pages` | Directory name (alphanumeric + hyphens/underscores) |
+| `name` | `KIOSK_LANDING.html` | Asset filename including extension |
 
 **Examples:**
 ```
-/resource/waha/landing/home.html
-/resource/waha/shared/logo.png
-/resource/hrco/products/pizza.jpeg
-/resource/waha/shared/logo.png    ← used inside an hrco landing page (cross-store)
+/resource/waha/pages/KIOSK_LANDING.html          ← global kiosk page (all branches)
+/resource/waha/images/logo.png                   ← org-level image
+/resource/waha/north-branch/pages/KIOSK_LANDING.html  ← branch-specific override
+/resource/waha/north-branch/images/banner.jpg    ← branch-specific image
 ```
 
-Cross-store references are valid — a resource is always served from its owning store's namespace regardless of which page embeds it.
+**Constraint:** store names must not collide with directory names (`pages`, `images`, `products`, etc.). Validated on store creation.
+
+---
+
+## URL Resolution
+
+### 3-segment path (org-level): `/resource/{org}/{dir}/{name}`
+
+1. `SELECT id FROM organizations WHERE name = :org` → `orgId`
+2. `SELECT id FROM stores WHERE organization_id = :orgId AND name = :org` → `storeId` (global store has same name as org)
+3. `SELECT id FROM resource_directories WHERE store_id = :storeId AND name = :dir` → `dirId`
+4. `SELECT resource_id FROM resource_assets WHERE directory_id = :dirId AND name = :name` → `resourceId`
+5. Serve bytes with ETag + long-cache headers.
+
+### 4-segment path (branch-level): `/resource/{org}/{branch}/{dir}/{name}`
+
+1. `SELECT id FROM organizations WHERE name = :org` → `orgId`
+2. `SELECT id FROM stores WHERE organization_id = :orgId AND name = :branch` → `storeId`
+3. `SELECT id FROM resource_directories WHERE store_id = :storeId AND name = :dir` → `dirId`
+4. `SELECT resource_id FROM resource_assets WHERE directory_id = :dirId AND name = :name` → `resourceId`
+5. Serve bytes with ETag + long-cache headers.
+
+Always validate the full chain. No partial resolution.
 
 ---
 
@@ -42,22 +72,18 @@ Cross-store references are valid — a resource is always served from its owning
 | Column | Type | Notes |
 |--------|------|-------|
 | `id` | bigint PK | |
-| `store_id` | bigint FK → stores | owning store |
-| `directory_id` | bigint FK → resource_directories | |
-| `name` | varchar(255) | filename, validated on creation |
+| `filename` | varchar(255) | original upload filename |
 | `mime_type` | varchar(100) | e.g. `image/jpeg`, `text/html` |
-| `content_hash` | varchar(64) | SHA-256 of content — used as ETag |
-| `size_bytes` | int | enforced against system max (see System Properties) |
-| `created_at` | datetime | |
-| `updated_at` | datetime | |
+| `size_bytes` | bigint | |
+| `sha256` | varchar(64) | content hash — deduplication key and ETag value |
 
-**Unique constraint:** `(store_id, directory_id, name)` — same name allowed in different directories or stores.
+Content-addressed: same bytes → same `sha256` → same row. Multiple assets can point to the same resource.
 
 ### `resource_data`
 | Column | Type | Notes |
 |--------|------|-------|
 | `resource_id` | bigint PK, FK → resources | 1-to-1 |
-| `data` | mediumblob | raw bytes — max ~16MB at MySQL level, capped by system property |
+| `data` | mediumblob | raw bytes |
 
 Split table so metadata queries never load binary content.
 
@@ -65,34 +91,29 @@ Split table so metadata queries never load binary content.
 | Column | Type | Notes |
 |--------|------|-------|
 | `id` | bigint PK | |
+| `organization_id` | bigint FK → organizations | owning org |
 | `store_id` | bigint FK → stores | owning store |
-| `name` | varchar(100) | free-form, validated on creation (alphanumeric + hyphens) |
-| `created_at` | datetime | |
+| `name` | varchar(100) | alphanumeric + hyphens/underscores |
 
 **Unique constraint:** `(store_id, name)`
 
----
+### `resource_assets`
+| Column | Type | Notes |
+|--------|------|-------|
+| `id` | bigint PK | |
+| `directory_id` | bigint FK → resource_directories | |
+| `name` | varchar(255) | asset filename |
+| `resource_id` | bigint FK → resources | points to the binary |
 
-## URL Resolution
-
-For `GET /resource/waha/landing/banner.jpg`:
-
-1. `SELECT id FROM stores WHERE name = 'waha'` → `store_id`
-2. `SELECT id FROM resource_directories WHERE store_id = ? AND name = 'landing'` → `directory_id`
-3. `SELECT id, mime_type, content_hash FROM resources WHERE store_id = ? AND directory_id = ? AND name = 'banner.jpg'` → resource
-4. `SELECT data FROM resource_data WHERE resource_id = ?` → bytes
-5. Respond: `200 OK`, `Content-Type: {mime_type}`, `ETag: "{content_hash}"`, `Cache-Control: public, max-age=31536000`
-
-Always validate the full store → directory → resource chain. Never resolve by `directory_id + name` alone.
+**Unique constraint:** `(directory_id, name)` — same filename allowed in different directories or stores.
 
 ---
 
 ## Caching
 
-- `ETag` is set to `content_hash` (SHA-256).
-- `Cache-Control: public, max-age=31536000` (1 year) — content is immutable under a given name+hash.
-- On update, `content_hash` changes → browser/client fetches fresh copy on next request.
-- HTML and images cache independently — updating a landing page does not force image re-downloads.
+- `ETag` is set to `"{sha256}"`.
+- `Cache-Control: public, max-age=31536000, immutable` (1 year).
+- On update, `sha256` changes → cache miss → fresh fetch.
 
 ---
 
@@ -100,73 +121,15 @@ Always validate the full store → directory → resource chain. Never resolve b
 
 | Key | Default | Description |
 |-----|---------|-------------|
-| `resource.max_size_bytes` | `2097152` (2 MB) | Upload size limit, enforced server-side before write |
-
-Stored in `system_properties` table. Adjustable by `SUPER_ADMIN` without redeployment.
+| `resource.max_size_bytes` | `2097152` (2 MB) | Upload size limit |
 
 ---
 
 ## Permissions
 
-### Phase 1 — Simple
-| Permission | Description |
-|-----------|-------------|
-| `EDIT_RESOURCES` | Upload, update, delete resources and manage directories |
-
-Granted to: `SUPER_ADMIN`, `ADMIN`, and any `REGISTERED` user explicitly granted it.
-
-### Phase 2 — Granular (future)
-| Permission | Description |
-|-----------|-------------|
-| `VIEW_RESOURCES` | Browse resource explorer (read-only) |
-| `EDIT_RESOURCES` | Upload and update resource content |
-| `DELETE_RESOURCES` | Delete resources |
-| `MANAGE_DIRECTORIES` | Create, rename, delete directories |
-| `EDIT_PAGES` | Edit landing page HTML resources |
-| `PUBLISH_PAGES` | Make a landing page live (if draft/publish workflow added) |
-
----
-
-## Resource Explorer (UI)
-
-A dedicated admin screen inside `waha_platform` for managing resources — browsing directories, uploading files, previewing HTML pages and images.
-
-### Entry point (phase 1)
-
-A button in the **Settings screen → Admin sector** opens the Resource Explorer. No navigation menu needed until the full admin menu is built.
-
-### Layout
-
-Two-panel file-explorer layout:
-
-```
-┌─────────────────┬──────────────────────────────────────┐
-│  Directories    │  Files                               │
-│                 │                                      │
-│  landing        │  [thumbnail] home.html               │
-│  products    ←  │  [thumbnail] banner.jpg              │
-│  shared         │  [thumbnail] logo.png                │
-│  drafts         │                                      │
-│                 │                                      │
-│  [+ New dir]    │                          [+ Upload]  │
-└─────────────────┴──────────────────────────────────────┘
-```
-
-- Selecting a directory loads its resources in the main panel
-- Clicking a resource opens a preview (image inline, HTML in iframe) with options: copy URL, delete
-- Upload button adds a file to the current directory
-
-### Access points from other admin screens
-
-When an admin edits a product, category, or landing page and needs to attach an image, they get three options:
-
-| Option | Description |
-|--------|-------------|
-| **Resource Manager** | Pick an existing resource from the Explorer |
-| **Camera** | Capture a new photo (mobile / tablet) |
-| **Gallery** | Upload from device gallery / file system |
-
-Camera and Gallery uploads go directly into a resource in the current store's selected directory before being linked to the product/category.
+| Permission | Who | Description |
+|-----------|-----|-------------|
+| `EDIT_RESOURCES` | OPERATOR and above | Upload, update, delete resources and manage directories |
 
 ---
 
@@ -175,17 +138,21 @@ Camera and Gallery uploads go directly into a resource in the current store's se
 ### Public (no auth)
 | Method | Path | Description |
 |--------|------|-------------|
-| `GET` | `/resource/{store}/{directory}/{name}` | Serve resource bytes |
+| `GET` | `/resource/{org}/{directory}/{name}` | Serve org-level resource |
+| `GET` | `/resource/{org}/{branch}/{directory}/{name}` | Serve branch-level resource |
 
-### Admin (requires `EDIT_RESOURCES` or specific phase-2 permission)
+### Admin (requires `EDIT_RESOURCES`)
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/api/resources/{store}/directories` | List directories for a store |
-| `POST` | `/api/resources/{store}/directories` | Create directory |
-| `GET` | `/api/resources/{store}/{directory}` | List resources in directory |
-| `POST` | `/api/resources/{store}/{directory}` | Upload resource (multipart) |
-| `PUT` | `/api/resources/{store}/{directory}/{name}` | Replace resource content |
-| `DELETE` | `/api/resources/{store}/{directory}/{name}` | Delete resource |
+| `POST` | `/api/resources/{store}/directories` | Create directory (`{"name": "pages"}`) |
+| `GET` | `/api/resources/{store}/directories/{dir}` | List assets in directory |
+| `POST` | `/api/resources/{store}/directories/{dir}` | Upload asset (multipart `file`, optional `name`) |
+| `PATCH` | `/api/resources/{store}/directories/{dir}/{name}/move` | Move asset to another directory |
+| `PATCH` | `/api/resources/{store}/directories/{dir}/{name}/rename` | Rename asset |
+| `DELETE` | `/api/resources/{store}/directories/{dir}/{name}` | Delete asset |
+
+The `{store}` segment in admin paths is the store slug (`stores.name`). For org-level (global) resources use the org's global store slug (same as the org name). The response from upload includes `url` — the correct public URL for the asset.
 
 ---
 
@@ -193,11 +160,12 @@ Camera and Gallery uploads go directly into a resource in the current store's se
 
 | # | Decision |
 |---|----------|
-| 1 | **No draft/publish workflow.** Last-write-wins. Admins manage work-in-progress by saving to a `drafts` directory (or any name they choose); when ready, they copy/move to the live directory. No `status` column needed. |
-| 2 | **Store-level scope only.** Directories and resources belong to a store. Cross-store sharing works by referencing the owning store's URL path — no platform-wide shared scope needed. |
-| 3 | **No versioning.** Last-write-wins. Re-upload if something needs to be reverted. Revisit only if an audit trail becomes a hard requirement. |
-| 4 | **Resource Explorer lives in `waha_platform`.** It is an admin screen like any other — same app, same auth, same permission checks. The 3-option image picker (Resource Manager / Camera / Gallery) is also a widget inside `waha_platform` used wherever an image needs to be attached. |
+| 1 | **Org name = global store name.** The global store for an org has the same slug as the org (e.g., org `waha` → global store `waha`). This makes 3-segment URLs natural: `/resource/waha/pages/X` reads as "org waha, pages directory, file X". |
+| 2 | **Branch names must not collide with directory names.** The 3-segment vs 4-segment distinction relies on the second segment being unambiguously a branch name or a directory name. Store creation must reject names that match common directory names (`pages`, `images`, `products`, etc.). |
+| 3 | **No draft/publish workflow.** Last-write-wins. Use a `drafts` directory for staging. |
+| 4 | **No versioning.** Re-upload to update. |
+| 5 | **Content-addressed deduplication.** Same bytes → same resource row. Multiple asset entries can point to the same resource id. |
 
 ---
 
-*Last updated: 2026-08-28*
+*Last updated: 2026-09-07*

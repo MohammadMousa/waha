@@ -7,7 +7,11 @@ CREATE TRIGGER trg_user_roles_before_insert
 BEFORE INSERT ON user_roles
 FOR EACH ROW
 BEGIN
-    IF NEW.scope_type = 'COMPANY' THEN
+    IF NEW.scope_type = 'SYSTEM' THEN
+        IF NEW.scope_id != 0 THEN
+            SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'SYSTEM scope_type requires scope_id = 0';
+        END IF;
+    ELSEIF NEW.scope_type = 'COMPANY' THEN
         IF NOT EXISTS (SELECT 1 FROM organizations WHERE id = NEW.scope_id) THEN
             SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'scope_id does not exist in organizations';
         END IF;
@@ -26,7 +30,11 @@ CREATE TRIGGER trg_user_roles_before_update
 BEFORE UPDATE ON user_roles
 FOR EACH ROW
 BEGIN
-    IF NEW.scope_type = 'COMPANY' THEN
+    IF NEW.scope_type = 'SYSTEM' THEN
+        IF NEW.scope_id != 0 THEN
+            SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'SYSTEM scope_type requires scope_id = 0';
+        END IF;
+    ELSEIF NEW.scope_type = 'COMPANY' THEN
         IF NOT EXISTS (SELECT 1 FROM organizations WHERE id = NEW.scope_id) THEN
             SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'scope_id does not exist in organizations';
         END IF;

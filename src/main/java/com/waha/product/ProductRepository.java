@@ -234,13 +234,17 @@ public class ProductRepository {
 
     public ProductPage browseByStore(long companyId, Long categoryId, int page, int size) {
         String categoryFilter = categoryId != null ? " AND category_id = :categoryId" : "";
+        Map<String, Object> params = new java.util.HashMap<>();
+        params.put("companyId", companyId);
+        if (categoryId != null) params.put("categoryId", categoryId);
+        params.put("pageLimit", size + 1);
+        params.put("pageOffset", page * size);
         List<Product> results = jdbc.query(
             "SELECT " + PRODUCT_COLS + " FROM products " +
             "WHERE company_id = :companyId AND `public` = TRUE AND active = TRUE" + categoryFilter +
             " ORDER BY name->>'$.en' " +
             "LIMIT :pageLimit OFFSET :pageOffset",
-            Map.of("companyId", companyId, "categoryId", categoryId,
-                   "pageLimit", size + 1, "pageOffset", page * size),
+            params,
             (rs, i) -> mapProduct(rs)
         );
         boolean hasMore = results.size() > size;

@@ -1,3 +1,8 @@
+-- Repeatable migration (R__) — must be safely re-runnable whenever this
+-- file's content changes, so drop before create rather than assuming a
+-- fresh database.
+DROP PROCEDURE IF EXISTS sp_create_order_idempotent;
+
 DELIMITER //
 
 -- id is client-supplied and IS the idempotency key: the Flutter app
@@ -5,8 +10,13 @@ DELIMITER //
 -- this with the same id on any retry or later offline-sync replay. A call
 -- with an id that already exists is a safe no-op - it returns
 -- was_created=FALSE instead of erroring or double-inserting.
+-- p_id/p_order_id collation must match orders.id (utf8mb4_0900_ai_ci) explicitly
+-- here: without it, MySQL derives the parameter's collation from the session
+-- that ran CREATE PROCEDURE (utf8mb4_unicode_ci, this DB's default), and any
+-- comparison against orders.id below then fails with "Illegal mix of
+-- collations" — see sp_mark_order_paid for the same fix.
 CREATE PROCEDURE sp_create_order_idempotent(
-    IN p_id              CHAR(36),
+    IN p_id              CHAR(36) CHARACTER SET utf8mb4 COLLATE utf8mb4_0900_ai_ci,
     IN p_store_id        BIGINT,
     IN p_currency        CHAR(3),
     IN p_tax_rate        DECIMAL(5,4),

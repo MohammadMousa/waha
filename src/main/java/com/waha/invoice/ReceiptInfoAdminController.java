@@ -10,9 +10,8 @@ import org.springframework.web.bind.annotation.*;
 import java.util.Map;
 import java.util.Optional;
 
-// Admin GET + PATCH for receipt_info. Requires MANAGE_STORES.
-// GET returns the receipt info for the caller's session store.
-// PATCH upserts — creates a new row if none exists for this store.
+// Admin GET + PATCH for receipt_info. Now organization-level (not store-level).
+// GET/PATCH use ?organizationId — defaults to 1 when omitted.
 @RestController
 @RequestMapping("/api/receipt-info")
 public class ReceiptInfoAdminController {
@@ -29,15 +28,14 @@ public class ReceiptInfoAdminController {
     @GetMapping
     public ResponseEntity<?> get(
             @RequestHeader(value = "Authorization", required = false) String auth,
-            @RequestParam(value = "storeId", required = false) Long storeId) {
+            @RequestParam(value = "organizationId", required = false) Long organizationId) {
 
-        Optional<UserSession> session = sessionService.tryResolveSession(auth);
-        long resolvedStore = resolveStore(storeId, session);
-        sessionService.requirePermission(auth, Permission.MANAGE_STORES, resolvedStore);
+        long orgId = resolveOrg(organizationId);
+        sessionService.requirePermissionForOrg(auth, Permission.MANAGE_STORES, orgId);
 
-        Optional<ReceiptInfo> info = receiptInfoRepository.findByStoreId(resolvedStore);
+        Optional<ReceiptInfo> info = receiptInfoRepository.findByOrganizationId(orgId);
         if (info.isEmpty()) {
-            return ResponseEntity.ok(Map.of("storeId", resolvedStore));
+            return ResponseEntity.ok(Map.of("organizationId", orgId));
         }
         return ResponseEntity.ok(receiptInfoRepository.toResponse(info.get()));
     }
@@ -45,19 +43,17 @@ public class ReceiptInfoAdminController {
     @PatchMapping
     public ResponseEntity<?> patch(
             @RequestHeader(value = "Authorization", required = false) String auth,
-            @RequestParam(value = "storeId", required = false) Long storeId,
+            @RequestParam(value = "organizationId", required = false) Long organizationId,
             @RequestBody Map<String, Object> body) {
 
-        Optional<UserSession> session = sessionService.tryResolveSession(auth);
-        long resolvedStore = resolveStore(storeId, session);
-        sessionService.requirePermission(auth, Permission.MANAGE_STORES, resolvedStore);
+        long orgId = resolveOrg(organizationId);
+        sessionService.requirePermissionForOrg(auth, Permission.MANAGE_STORES, orgId);
 
-        receiptInfoRepository.upsert(resolvedStore, body);
+        receiptInfoRepository.upsert(orgId, body);
         return ResponseEntity.ok().build();
     }
 
-    private long resolveStore(Long explicit, Optional<UserSession> session) {
-        if (explicit != null) return explicit;
-        return session.map(UserSession::storeId).map(s -> s != null ? s : 1L).orElse(1L);
+    private long resolveOrg(Long explicit) {
+        return explicit != null ? explicit : 1L;
     }
 }

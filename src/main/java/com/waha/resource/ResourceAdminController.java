@@ -58,7 +58,8 @@ public class ResourceAdminController {
                 new ErrorResponse("Directory name may only contain letters, digits, hyphens, and underscores"));
         }
         try {
-            long id = resourceRepository.createDirectory(storeId, name.toLowerCase());
+            long orgId = resourceRepository.findOrgIdByStoreId(storeId).orElse(1L);
+            long id = resourceRepository.createDirectory(orgId, storeId, name.toLowerCase());
             return ResponseEntity.ok(Map.of("id", id, "name", name.toLowerCase()));
         } catch (Exception e) {
             if (e.getMessage() != null && e.getMessage().contains("Duplicate")) {
@@ -81,7 +82,7 @@ public class ResourceAdminController {
 
         var dirId = resourceRepository.findDirectoryId(storeId, dir);
         if (dirId.isEmpty()) return dirNotFound(store, dir);
-        return ResponseEntity.ok(resourceRepository.listAssets(storeId, dirId.get()));
+        return ResponseEntity.ok(resourceRepository.listAssets(dirId.get()));
     }
 
     @PostMapping(value = "/directories/{dir}", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
@@ -118,11 +119,18 @@ public class ResourceAdminController {
         long resourceId = resourceRepository.findIdBySha256(sha256)
             .orElseGet(() -> resourceRepository.store(originalName, mimeType, data.length, sha256, data));
 
-        resourceRepository.upsertAsset(storeId, dirId.get(), assetName, resourceId);
+        resourceRepository.upsertAsset(dirId.get(), assetName, resourceId);
+
+        // Org-level (global) store: store name = org name → 3-segment URL.
+        // Branch store: store name ≠ org name → 4-segment URL with org prefix.
+        String orgSlug = resourceRepository.findOrgSlugByStoreId(storeId).orElse(null);
+        String publicUrl = (orgSlug != null && orgSlug.equals(store))
+            ? "/resource/" + store + "/" + dir + "/" + assetName
+            : "/resource/" + (orgSlug != null ? orgSlug : store) + "/" + store + "/" + dir + "/" + assetName;
 
         return ResponseEntity.ok(Map.of(
             "name", assetName,
-            "url", "/resource/" + store + "/" + dir + "/" + assetName,
+            "url", publicUrl,
             "resourceId", resourceId,
             "sha256", sha256
         ));
@@ -152,7 +160,7 @@ public class ResourceAdminController {
         if (fromDirId.get().equals(toDirId.get()))
             return ResponseEntity.badRequest().body(new ErrorResponse("Source and target directory are the same"));
 
-        boolean moved = resourceRepository.moveAsset(storeId, fromDirId.get(), toDirId.get(), name);
+        boolean moved = resourceRepository.moveAsset(fromDirId.get(), toDirId.get(), name);
         if (!moved) return ResponseEntity.status(404).body(new ErrorResponse("Asset not found: " + name));
         return ResponseEntity.ok().build();
     }
@@ -175,7 +183,7 @@ public class ResourceAdminController {
         if (newName == null || newName.isBlank())
             return ResponseEntity.badRequest().body(new ErrorResponse("newName is required"));
 
-        boolean renamed = resourceRepository.renameAsset(storeId, dirId.get(), name, newName.trim());
+        boolean renamed = resourceRepository.renameAsset(dirId.get(), name, newName.trim());
         if (!renamed) return ResponseEntity.status(404).body(new ErrorResponse("Asset not found: " + name));
         return ResponseEntity.ok().build();
     }
@@ -193,7 +201,7 @@ public class ResourceAdminController {
         var dirId = resourceRepository.findDirectoryId(storeId, dir);
         if (dirId.isEmpty()) return dirNotFound(store, dir);
 
-        boolean deleted = resourceRepository.deleteAsset(storeId, dirId.get(), name);
+        boolean deleted = resourceRepository.deleteAsset(dirId.get(), name);
         if (!deleted) return ResponseEntity.status(404).body(new ErrorResponse("Asset not found: " + name));
         return ResponseEntity.ok().build();
     }

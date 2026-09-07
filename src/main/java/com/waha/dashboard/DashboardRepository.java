@@ -1,5 +1,6 @@
 package com.waha.dashboard;
 
+import org.springframework.jdbc.core.namedparam.MapSqlParameterSource;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Repository;
 
@@ -20,33 +21,38 @@ public class DashboardRepository {
 
     // ── KPIs ─────────────────────────────────────────────────────────────────
 
-    public Map<String, Object> getKpis() {
-        // Revenue + order counts: today, yesterday, all-time
+    public Map<String, Object> getKpis(long orgId, Long storeId) {
+        String storeFilter = storeFilter(storeId);
+        MapSqlParameterSource p = baseParams(orgId, storeId);
+
         Map<String, Object> row = namedJdbc.queryForMap("""
             SELECT
-              COALESCE(SUM(CASE WHEN DATE(created_at) = CURDATE()                           THEN total_amount END), 0) AS today_revenue,
-              COALESCE(SUM(CASE WHEN DATE(created_at) = DATE_SUB(CURDATE(), INTERVAL 1 DAY) THEN total_amount END), 0) AS yesterday_revenue,
-              COALESCE(SUM(total_amount), 0)                                                                           AS total_revenue,
-              COUNT(CASE WHEN DATE(created_at) = CURDATE()                           THEN 1 END)                       AS today_orders,
-              COUNT(CASE WHEN DATE(created_at) = DATE_SUB(CURDATE(), INTERVAL 1 DAY) THEN 1 END)                       AS yesterday_orders,
-              COUNT(*)                                                                                                  AS total_orders,
-              COUNT(DISTINCT store_id)                                                                                  AS active_stores
-            FROM orders
-            WHERE status = 'PAID'
-            """, Map.of());
+              COALESCE(SUM(CASE WHEN DATE(o.created_at) = CURDATE()                           THEN o.total_amount END), 0) AS today_revenue,
+              COALESCE(SUM(CASE WHEN DATE(o.created_at) = DATE_SUB(CURDATE(), INTERVAL 1 DAY) THEN o.total_amount END), 0) AS yesterday_revenue,
+              COALESCE(SUM(o.total_amount), 0)                                                                              AS total_revenue,
+              COUNT(CASE WHEN DATE(o.created_at) = CURDATE()                           THEN 1 END)                          AS today_orders,
+              COUNT(CASE WHEN DATE(o.created_at) = DATE_SUB(CURDATE(), INTERVAL 1 DAY) THEN 1 END)                          AS yesterday_orders,
+              COUNT(*)                                                                                                       AS total_orders,
+              COUNT(DISTINCT o.store_id)                                                                                     AS active_stores
+            FROM orders o
+            JOIN stores s ON s.id = o.store_id
+            WHERE o.status = 'PAID'
+              AND s.organization_id = :orgId
+            """ + storeFilter, p);
 
         long kioskCount = namedJdbc.queryForObject(
-            "SELECT COUNT(*) FROM users WHERE account_type = 'KIOSK'",
-            Map.of(), Long.class
+            "SELECT COUNT(*) FROM devices WHERE enabled = 1 AND organization_id = :orgId" +
+            (storeId != null ? " AND store_id = :storeId" : ""),
+            p, Long.class
         );
 
-        BigDecimal totalRevenue  = toBD(row.get("total_revenue"));
-        BigDecimal todayRevenue  = toBD(row.get("today_revenue"));
-        BigDecimal yestRevenue   = toBD(row.get("yesterday_revenue"));
-        long totalOrders   = toLong(row.get("total_orders"));
-        long todayOrders   = toLong(row.get("today_orders"));
-        long yestOrders    = toLong(row.get("yesterday_orders"));
-        long activeStores  = toLong(row.get("active_stores"));
+        BigDecimal totalRevenue = toBD(row.get("total_revenue"));
+        BigDecimal todayRevenue = toBD(row.get("today_revenue"));
+        BigDecimal yestRevenue  = toBD(row.get("yesterday_revenue"));
+        long totalOrders  = toLong(row.get("total_orders"));
+        long todayOrders  = toLong(row.get("today_orders"));
+        long yestOrders   = toLong(row.get("yesterday_orders"));
+        long activeStores = toLong(row.get("active_stores"));
 
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("todayRevenue",       todayRevenue);
@@ -64,41 +70,35 @@ public class DashboardRepository {
 
     // ── Daily series ──────────────────────────────────────────────────────────
 
-    public List<Map<String, Object>> getSeries(String metric, String period) {
+    public List<Map<String, Object>> getSeries(String metric, String period, long orgId, Long storeId) {
         int days = switch (period) {
             case "7d"  -> 7;
             case "15d" -> 15;
             case "3m"  -> 90;
-            default    -> 30; // 1m
+            default    -> 30;
         };
-
-        String valueExpr = "revenue".equals(metric)
-            ? "COALESCE(SUM(total_amount), 0)"
-            : "COUNT(*)";
+        String valueExpr  = "revenue".equals(metric) ? "COALESCE(SUM(o.total_amount), 0)" : "COUNT(*)";
+        String storeFilter = storeFilter(storeId);
+        MapSqlParameterSource p = baseParams(orgId, storeId).addValue("days", days);
 
         List<Map<String, Object>> rows = namedJdbc.queryForList("""
-            SELECT DATE(created_at) AS day, %s AS value
-            FROM orders
-            WHERE status = 'PAID'
-              AND created_at >= DATE_SUB(CURDATE(), INTERVAL :days DAY)
-            GROUP BY DATE(created_at)
-            ORDER BY day ASC
-            """.formatted(valueExpr),
-            Map.of("days", days)
-        );
+            SELECT DATE(o.created_at) AS day, %s AS value
+            FROM orders o
+            JOIN stores s ON s.id = o.store_id
+            WHERE o.status = 'PAID'
+              AND s.organization_id = :orgId
+              AND o.created_at >= DATE_SUB(CURDATE(), INTERVAL :days DAY)
+            """.formatted(valueExpr) + storeFilter + " GROUP BY DATE(o.created_at) ORDER BY day ASC", p);
 
-        // Build a full date range so gaps appear as zero (not missing)
         Map<String, Object> byDay = new LinkedHashMap<>();
-        for (Map<String, Object> r : rows) {
-            byDay.put(r.get("day").toString(), r.get("value"));
-        }
+        for (Map<String, Object> r : rows) byDay.put(r.get("day").toString(), r.get("value"));
 
         DateTimeFormatter fmt = DateTimeFormatter.ofPattern("MMM d", Locale.ENGLISH);
         List<Map<String, Object>> result = new ArrayList<>(days);
         LocalDate start = LocalDate.now().minusDays(days - 1L);
         for (int i = 0; i < days; i++) {
             LocalDate d = start.plusDays(i);
-            String key = d.toString(); // yyyy-MM-dd
+            String key = d.toString();
             Map<String, Object> point = new LinkedHashMap<>();
             point.put("label", d.format(fmt));
             point.put("value", byDay.getOrDefault(key, "revenue".equals(metric) ? BigDecimal.ZERO : 0L));
@@ -109,29 +109,26 @@ public class DashboardRepository {
 
     // ── Monthly revenue ───────────────────────────────────────────────────────
 
-    public List<Map<String, Object>> getMonthly(String period) {
+    public List<Map<String, Object>> getMonthly(String period, long orgId, Long storeId) {
         int months = switch (period) {
             case "1y" -> 12;
             case "2y" -> 24;
-            default   -> 6;  // 6m
+            default   -> 6;
         };
+        String storeFilter = storeFilter(storeId);
+        MapSqlParameterSource p = baseParams(orgId, storeId).addValue("months", months);
 
-        List<Map<String, Object>> rows = namedJdbc.queryForList("""
-            SELECT
-              DATE_FORMAT(created_at, '%Y-%m')           AS month_key,
-              MIN(DATE_FORMAT(created_at, '%b %Y'))      AS label,
-              COALESCE(SUM(total_amount), 0)             AS value
-            FROM orders
-            WHERE status = 'PAID'
-              AND created_at >= DATE_SUB(CURDATE(), INTERVAL :months MONTH)
-            GROUP BY DATE_FORMAT(created_at, '%Y-%m')
-            ORDER BY month_key ASC
-            """,
-            Map.of("months", months)
-        );
+        List<Map<String, Object>> rows = namedJdbc.queryForList(
+            "SELECT DATE_FORMAT(o.created_at, '%Y-%m') AS month_key," +
+            " MIN(DATE_FORMAT(o.created_at, '%b %Y')) AS label," +
+            " COALESCE(SUM(o.total_amount), 0) AS value" +
+            " FROM orders o JOIN stores s ON s.id = o.store_id" +
+            " WHERE o.status = 'PAID' AND s.organization_id = :orgId" +
+            " AND o.created_at >= DATE_SUB(CURDATE(), INTERVAL :months MONTH)" +
+            storeFilter +
+            " GROUP BY DATE_FORMAT(o.created_at, '%Y-%m') ORDER BY month_key ASC", p);
 
-        // Fill gaps for months with no orders
-        Map<String, Object> byMonth = new LinkedHashMap<>();
+        Map<String, Object> byMonth    = new LinkedHashMap<>();
         Map<String, String> labelByMonth = new LinkedHashMap<>();
         for (Map<String, Object> r : rows) {
             String k = r.get("month_key").toString();
@@ -156,19 +153,32 @@ public class DashboardRepository {
 
     // ── Recent orders ─────────────────────────────────────────────────────────
 
-    public List<Map<String, Object>> getRecentOrders() {
+    public List<Map<String, Object>> getRecentOrders(long orgId, Long storeId) {
+        String storeFilter = storeFilter(storeId);
+        MapSqlParameterSource p = baseParams(orgId, storeId);
         return namedJdbc.queryForList(
-            "SELECT o.id, o.total_amount AS total, o.status, o.currency, o.created_at," +
+            "SELECT o.id, o.display_id, o.total_amount AS total, o.status, o.currency, o.created_at," +
             " s.name AS store_name, s.display_name AS store_display_name" +
             " FROM orders o" +
-            " JOIN stores s ON o.store_id = s.id" +
+            " JOIN stores s ON s.id = o.store_id" +
             " WHERE o.status = 'PAID'" +
-            " ORDER BY o.created_at DESC" +
-            " LIMIT 20",
-            Map.of());
+            " AND s.organization_id = :orgId" +
+            storeFilter +
+            " ORDER BY o.created_at DESC LIMIT 20",
+            p);
     }
 
     // ── helpers ───────────────────────────────────────────────────────────────
+
+    private static String storeFilter(Long storeId) {
+        return storeId != null ? " AND o.store_id = :storeId" : "";
+    }
+
+    private static MapSqlParameterSource baseParams(long orgId, Long storeId) {
+        MapSqlParameterSource p = new MapSqlParameterSource("orgId", orgId);
+        if (storeId != null) p.addValue("storeId", storeId);
+        return p;
+    }
 
     private static BigDecimal toBD(Object v) {
         if (v == null) return BigDecimal.ZERO;

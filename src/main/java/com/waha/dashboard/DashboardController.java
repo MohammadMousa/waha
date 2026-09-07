@@ -2,6 +2,7 @@ package com.waha.dashboard;
 
 import com.waha.auth.Permission;
 import com.waha.auth.SessionService;
+import com.waha.auth.UserSession;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -25,46 +26,54 @@ public class DashboardController {
 
     @GetMapping("/kpis")
     public ResponseEntity<?> kpis(
-            @RequestHeader(value = "Authorization", required = false) String auth) {
+            @RequestHeader(value = "Authorization", required = false) String auth,
+            @RequestParam(required = false) Long storeId) {
 
-        sessionService.requirePermission(auth, Permission.VIEW_ALL_ORDERS, 1L);
-        return ResponseEntity.ok(dashboardRepository.getKpis());
+        UserSession session = sessionService.requireSession(auth);
+        sessionService.requirePermission(auth, Permission.VIEW_ALL_ORDERS, session.storeId());
+        return ResponseEntity.ok(dashboardRepository.getKpis(session.organizationId(), storeId));
     }
 
     @GetMapping("/series")
     public ResponseEntity<?> series(
             @RequestHeader(value = "Authorization", required = false) String auth,
             @RequestParam(defaultValue = "revenue") String metric,
-            @RequestParam(defaultValue = "1m")      String period) {
+            @RequestParam(defaultValue = "1m")      String period,
+            @RequestParam(required = false)          Long storeId) {
 
-        sessionService.requirePermission(auth, Permission.VIEW_ALL_ORDERS, 1L);
+        UserSession session = sessionService.requireSession(auth);
+        sessionService.requirePermission(auth, Permission.VIEW_ALL_ORDERS, session.storeId());
 
         if (!VALID_METRICS.contains(metric))
             return ResponseEntity.badRequest().body("metric must be one of: " + VALID_METRICS);
         if (!VALID_PERIODS_SERIES.contains(period))
             return ResponseEntity.badRequest().body("period must be one of: " + VALID_PERIODS_SERIES);
 
-        return ResponseEntity.ok(dashboardRepository.getSeries(metric, period));
+        return ResponseEntity.ok(dashboardRepository.getSeries(metric, period, session.organizationId(), storeId));
     }
 
     @GetMapping("/monthly")
     public ResponseEntity<?> monthly(
             @RequestHeader(value = "Authorization", required = false) String auth,
-            @RequestParam(defaultValue = "6m") String period) {
+            @RequestParam(defaultValue = "6m") String period,
+            @RequestParam(required = false)    Long storeId) {
 
-        sessionService.requirePermission(auth, Permission.VIEW_ALL_ORDERS, 1L);
+        UserSession session = sessionService.requireSession(auth);
+        sessionService.requirePermission(auth, Permission.VIEW_ALL_ORDERS, session.storeId());
 
         if (!VALID_PERIODS_MONTHLY.contains(period))
             return ResponseEntity.badRequest().body("period must be one of: " + VALID_PERIODS_MONTHLY);
 
-        return ResponseEntity.ok(dashboardRepository.getMonthly(period));
+        return ResponseEntity.ok(dashboardRepository.getMonthly(period, session.organizationId(), storeId));
     }
 
     @GetMapping("/recent-orders")
     public ResponseEntity<?> recentOrders(
-            @RequestHeader(value = "Authorization", required = false) String auth) {
+            @RequestHeader(value = "Authorization", required = false) String auth,
+            @RequestParam(required = false) Long storeId) {
 
-        sessionService.requirePermission(auth, Permission.VIEW_ALL_ORDERS, 1L);
-        return ResponseEntity.ok(dashboardRepository.getRecentOrders());
+        UserSession session = sessionService.requireSession(auth);
+        sessionService.requirePermission(auth, Permission.VIEW_ALL_ORDERS, session.storeId());
+        return ResponseEntity.ok(dashboardRepository.getRecentOrders(session.organizationId(), storeId));
     }
 }

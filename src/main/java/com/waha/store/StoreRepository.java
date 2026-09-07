@@ -38,31 +38,37 @@ public class StoreRepository {
         return results.get(0);
     }
 
-    public Optional<Long> findDefaultStoreId() {
+    public Optional<Long> findDefaultStoreId(long orgId) {
         List<Long> results = jdbcTemplate.query(
-            "SELECT CAST(value AS UNSIGNED) FROM system_properties WHERE `key` = 'default_store_id'",
-            (rs, i) -> rs.getLong(1)
+            "SELECT CAST(value AS UNSIGNED) FROM system_properties " +
+            "WHERE `key` = 'default_store_id' AND organization_id IN (0, ?) " +
+            "ORDER BY organization_id DESC LIMIT 1",
+            (rs, i) -> rs.getLong(1), orgId
         );
         return results.stream().findFirst();
     }
 
-    public java.util.Map<String, String> findAllProperties() {
+    public java.util.Map<String, String> findAllProperties(long orgId) {
         java.util.Map<String, String> props = new java.util.LinkedHashMap<>();
-        jdbcTemplate.query("SELECT `key`, value FROM system_properties",
+        jdbcTemplate.query(
+            "SELECT `key`, value FROM system_properties WHERE organization_id IN (0, ?) ORDER BY organization_id DESC",
             (org.springframework.jdbc.core.RowCallbackHandler) rs ->
-                props.put(rs.getString("key"), rs.getString("value")));
+                props.putIfAbsent(rs.getString("key"), rs.getString("value")),
+            orgId);
         return props;
     }
 
     public List<StoreSummary> findPublicStores() {
         return jdbcTemplate.query(
-            "SELECT id, name, display_name, currency, image_resource_id FROM stores WHERE public = TRUE AND active = TRUE ORDER BY name",
+            "SELECT s.id, s.name, s.display_name, s.currency, s.image_resource_id, o.slug AS org_slug" +
+            " FROM stores s LEFT JOIN organizations o ON o.id = s.organization_id" +
+            " WHERE s.public = TRUE AND s.active = TRUE ORDER BY s.name",
             (rs, i) -> {
                 String rawJson = rs.getString("display_name");
                 JsonNode displayName = parseJsonOrNull(rawJson);
                 long imgId = rs.getLong("image_resource_id");
                 Long imageResourceId = rs.wasNull() ? null : imgId;
-                return new StoreSummary(rs.getLong("id"), rs.getString("name"), displayName, rs.getString("currency"), imageResourceId);
+                return new StoreSummary(rs.getLong("id"), rs.getString("name"), displayName, rs.getString("currency"), imageResourceId, rs.getString("org_slug"));
             }
         );
     }
@@ -76,32 +82,26 @@ public class StoreRepository {
         }
     }
 
-    public List<StoreSummary> findAdminStores(long rootStoreId) {
+    // Returns all active stores this user can manage based on their role scope hierarchy.
+    public List<StoreSummary> findManageableStores(long userId) {
         return jdbcTemplate.query(
-            "SELECT id, name, display_name, currency, image_resource_id FROM stores" +
-            " WHERE active = TRUE AND (? = 1 OR id = ?) ORDER BY id",
+            "SELECT DISTINCT s.id, s.name, s.display_name, s.currency, s.image_resource_id, o.slug AS org_slug" +
+            " FROM stores s LEFT JOIN organizations o ON o.id = s.organization_id" +
+            " WHERE s.active = TRUE AND (" +
+            "   EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = ? AND ur.scope_type = 'SYSTEM')" +
+            "   OR EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = ? AND ur.scope_type = 'COMPANY' AND ur.scope_id = s.organization_id)" +
+            "   OR EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = ? AND ur.scope_type = 'BRANCH_GROUP' AND ur.scope_id = s.branch_group_id)" +
+            "   OR EXISTS (SELECT 1 FROM user_roles ur WHERE ur.user_id = ? AND ur.scope_type = 'BRANCH' AND ur.scope_id = s.id)" +
+            " ) ORDER BY s.name",
             (rs, i) -> {
                 String rawJson = rs.getString("display_name");
                 JsonNode displayName = parseJsonOrNull(rawJson);
                 long imgId = rs.getLong("image_resource_id");
                 Long imageResourceId = rs.wasNull() ? null : imgId;
-                return new StoreSummary(rs.getLong("id"), rs.getString("name"), displayName, rs.getString("currency"), imageResourceId);
+                return new StoreSummary(rs.getLong("id"), rs.getString("name"), displayName, rs.getString("currency"), imageResourceId, rs.getString("org_slug"));
             },
-            rootStoreId, rootStoreId
+            userId, userId, userId, userId
         );
-    }
-
-    public Optional<Long> findAdminRootStore(long userId) {
-        List<Long> results = jdbcTemplate.query(
-            "SELECT ur.scope_id FROM user_roles ur" +
-            " JOIN roles r ON ur.role_id = r.id" +
-            " JOIN stores s ON ur.scope_id = s.id" +
-            " WHERE ur.user_id = ? AND r.name IN ('ADMIN', 'SUPER_ADMIN') AND s.active = TRUE" +
-            " ORDER BY ur.scope_id ASC LIMIT 1",
-            (rs, i) -> rs.getLong(1),
-            userId
-        );
-        return results.stream().findFirst();
     }
 
     public boolean isSelectable(long storeId) {
@@ -122,13 +122,14 @@ public class StoreRepository {
 
     public Optional<StoreSummary> findById(long storeId) {
         List<StoreSummary> results = jdbcTemplate.query(
-            "SELECT id, name, display_name, currency, image_resource_id FROM stores WHERE id = ?",
+            "SELECT s.id, s.name, s.display_name, s.currency, s.image_resource_id, o.slug AS org_slug" +
+            " FROM stores s LEFT JOIN organizations o ON o.id = s.organization_id WHERE s.id = ?",
             (rs, i) -> {
                 JsonNode displayName = parseJsonOrNull(rs.getString("display_name"));
                 long imgId = rs.getLong("image_resource_id");
                 Long imageResourceId = rs.wasNull() ? null : imgId;
                 return new StoreSummary(rs.getLong("id"), rs.getString("name"), displayName,
-                    rs.getString("currency"), imageResourceId);
+                    rs.getString("currency"), imageResourceId, rs.getString("org_slug"));
             },
             storeId
         );

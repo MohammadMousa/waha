@@ -3,6 +3,7 @@ package com.waha.product;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.waha.auth.Permission;
 import com.waha.auth.SessionService;
+import com.waha.auth.UserSession;
 import com.waha.common.ErrorResponse;
 import com.waha.resource.ResourceRepository;
 import org.springframework.http.ResponseEntity;
@@ -38,7 +39,8 @@ public class ProductAdminController {
     public ResponseEntity<?> create(
             @RequestHeader(value = "Authorization", required = false) String auth,
             @RequestBody JsonNode body) {
-        sessionService.requirePermission(auth, Permission.EDIT_PRODUCTS, 0L);
+        UserSession session = sessionService.requireSession(auth);
+        sessionService.requirePermissionForOrg(session, Permission.EDIT_PRODUCTS, session.organizationId());
         long id = productRepository.create(body);
         if (body.has("tags")) {
             List<String> tags = new ArrayList<>();
@@ -61,7 +63,7 @@ public class ProductAdminController {
         Product product = opt.get();
 
         long permStoreId = product.companyId();
-        sessionService.requirePermission(auth, Permission.EDIT_PRODUCTS, permStoreId);
+        sessionService.requirePermissionForOrg(auth, Permission.EDIT_PRODUCTS, permStoreId);
 
         productRepository.patch(id, body);
         return ResponseEntity.ok().build();
@@ -78,7 +80,7 @@ public class ProductAdminController {
         if (opt.isEmpty()) return ResponseEntity.status(404).body(new ErrorResponse("Product not found"));
         Product product = opt.get();
         long permStoreId = product.companyId();
-        sessionService.requirePermission(auth, Permission.EDIT_PRODUCTS, permStoreId);
+        sessionService.requirePermissionForOrg(auth, Permission.EDIT_PRODUCTS, permStoreId);
 
         Object raw = body.get("resourceId");
         if (raw == null) return ResponseEntity.badRequest().body(new ErrorResponse("resourceId required"));
@@ -96,7 +98,7 @@ public class ProductAdminController {
         if (opt.isEmpty()) return ResponseEntity.status(404).body(new ErrorResponse("Product not found"));
         Product product = opt.get();
         long permStoreId = product.companyId();
-        sessionService.requirePermission(auth, Permission.EDIT_PRODUCTS, permStoreId);
+        sessionService.requirePermissionForOrg(auth, Permission.EDIT_PRODUCTS, permStoreId);
 
         resourceRepository.removeGalleryImage(id, resourceId);
         return ResponseEntity.ok().build();

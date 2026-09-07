@@ -1,7 +1,7 @@
 package com.waha.auth;
 
 public enum Role {
-    SUPER_ADMIN, ADMIN, OPERATOR, CASHIER, REGISTERED, ANONYMOUS;
+    SUPER_ADMIN, ORGANIZATION_OWNER, BRANCH_ADMIN, OPERATOR, CASHIER, KIOSK;
 
     // SUPER_ADMIN.includes(OPERATOR) == true: higher ordinal = lower privilege
     public boolean includes(Role other) {

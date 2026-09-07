@@ -12,6 +12,7 @@ import org.springframework.jdbc.core.SqlOutParameter;
 import org.springframework.jdbc.core.simple.SimpleJdbcCall;
 import org.springframework.jdbc.core.simple.SimpleJdbcInsert;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
 import java.sql.Timestamp;
@@ -196,6 +197,13 @@ public class OrderRepository {
     // LAST_INSERT_ID() trick: after the INSERT/ON DUPLICATE KEY UPDATE,
     // LAST_INSERT_ID() returns the value that was SET inside the expression,
     // so we never need a separate SELECT to read back the counter.
+    // @Transactional pins both statements to the same pooled connection —
+    // LAST_INSERT_ID() is connection-scoped, so without it a busy pool can
+    // serve the SELECT from a different connection than the INSERT and
+    // return another session's value, producing duplicate display_ids
+    // (seen in practice: two kiosks assigned to the same store, e.g.
+    // oasis.kiosk1/oasis.kiosk2, checking out at the same time).
+    @Transactional
     public long nextDisplayId(long storeId) {
         jdbcTemplate.update(
             "INSERT INTO store_order_sequences (store_id, `last_value`) VALUES (?, LAST_INSERT_ID(1)) " +
@@ -218,7 +226,7 @@ public class OrderRepository {
             header = jdbcTemplate.queryForMap(
                 "SELECT o.display_id, o.store_id, o.status, o.subtotal_amount, o.tax_amount, o.total_amount, " +
                 "o.payment_reference, o.currency, o.tax_rate, o.username, o.created_at, " +
-                "(SELECT p.provider FROM payments p WHERE p.order_id = o.id AND p.outcome = 'PAID' ORDER BY p.attempted_at DESC LIMIT 1) AS payment_method " +
+                "(SELECT p.provider FROM payments p WHERE p.order_id = o.id AND p.outcome = 'PAID' ORDER BY p.created_at DESC LIMIT 1) AS payment_method " +
                 "FROM orders o WHERE o.id = ?",
                 orderId
             );
@@ -239,12 +247,12 @@ public class OrderRepository {
         // PENDING with no follow-up (abandoned sessions) are also excluded from invoice display —
         // they're audit data, not customer-facing payment history.
         List<PaymentRecord> payments = jdbcTemplate.query(
-            "SELECT provider, outcome, provider_reference, detail, attempted_at " +
-            "FROM payments WHERE order_id = ? AND outcome != 'PENDING' ORDER BY attempted_at DESC",
+            "SELECT provider, outcome, provider_reference, detail, created_at " +
+            "FROM payments WHERE order_id = ? AND outcome != 'PENDING' ORDER BY created_at DESC",
             (rs, i) -> new PaymentRecord(
                 rs.getString("provider"), rs.getString("outcome"),
                 rs.getString("provider_reference"), rs.getString("detail"),
-                rs.getTimestamp("attempted_at").toInstant()
+                rs.getTimestamp("created_at").toInstant()
             ), orderId
         );
 
@@ -273,7 +281,7 @@ public class OrderRepository {
     public List<OrderSummary> findByUsername(String username, long storeId, int page, int size) {
         return jdbcTemplate.query(
             "SELECT o.id, o.display_id, o.status, o.total_amount, o.currency, o.created_at, " +
-            "(SELECT p.provider FROM payments p WHERE p.order_id = o.id AND p.outcome = 'PAID' ORDER BY p.attempted_at DESC LIMIT 1) AS payment_method " +
+            "(SELECT p.provider FROM payments p WHERE p.order_id = o.id AND p.outcome = 'PAID' ORDER BY p.created_at DESC LIMIT 1) AS payment_method " +
             "FROM orders o WHERE o.username = ? AND o.store_id = ? ORDER BY o.created_at DESC LIMIT ? OFFSET ?",
             (rs, i) -> {
                 long did = rs.getLong("display_id");

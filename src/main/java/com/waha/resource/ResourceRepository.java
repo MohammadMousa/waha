@@ -84,7 +84,7 @@ public class ResourceRepository {
     // ── Named resource library ─────────────────────────────────────────────────
 
     public record DirectoryView(long id, String name) {}
-    public record AssetView(long id, String name, String mimeType, long sizeBytes, String sha256) {}
+    public record AssetView(long id, long resourceId, String name, String mimeType, long sizeBytes, String sha256) {}
 
     public Optional<String> getSystemProperty(String key) {
         List<String> r = jdbcTemplate.query(
@@ -100,10 +100,40 @@ public class ResourceRepository {
         return r.stream().findFirst();
     }
 
+    public Optional<Long> findOrgIdByStoreId(long storeId) {
+        List<Long> r = jdbcTemplate.query(
+            "SELECT organization_id FROM stores WHERE id = ? LIMIT 1",
+            (rs, i) -> rs.getLong("organization_id"), storeId);
+        return r.stream().findFirst();
+    }
+
     public Optional<String> findStoreNameById(long storeId) {
         List<String> r = jdbcTemplate.query(
             "SELECT name FROM stores WHERE id = ? LIMIT 1",
             (rs, i) -> rs.getString("name"), storeId);
+        return r.stream().findFirst();
+    }
+
+    public Optional<Long> findOrgIdBySlug(String orgSlug) {
+        List<Long> r = jdbcTemplate.query(
+            "SELECT id FROM organizations WHERE slug = ? LIMIT 1",
+            (rs, i) -> rs.getLong("id"), orgSlug);
+        return r.stream().findFirst();
+    }
+
+    public Optional<Long> findStoreIdByOrgAndName(long orgId, String storeName) {
+        List<Long> r = jdbcTemplate.query(
+            "SELECT id FROM stores WHERE organization_id = ? AND name = ? LIMIT 1",
+            (rs, i) -> rs.getLong("id"), orgId, storeName);
+        return r.stream().findFirst();
+    }
+
+    // Returns the org slug for the store — used to build the correct public URL.
+    public Optional<String> findOrgSlugByStoreId(long storeId) {
+        List<String> r = jdbcTemplate.query(
+            "SELECT o.slug FROM organizations o JOIN stores s ON s.organization_id = o.id " +
+            "WHERE s.id = ? LIMIT 1",
+            (rs, i) -> rs.getString("slug"), storeId);
         return r.stream().findFirst();
     }
 
@@ -114,10 +144,10 @@ public class ResourceRepository {
         return r.stream().findFirst();
     }
 
-    public Optional<Long> findAssetResourceId(long storeId, long directoryId, String assetName) {
+    public Optional<Long> findAssetResourceId(long directoryId, String assetName) {
         List<Long> r = jdbcTemplate.query(
-            "SELECT resource_id FROM resource_assets WHERE store_id = ? AND directory_id = ? AND name = ? LIMIT 1",
-            (rs, i) -> rs.getLong("resource_id"), storeId, directoryId, assetName);
+            "SELECT resource_id FROM resource_assets WHERE directory_id = ? AND name = ? LIMIT 1",
+            (rs, i) -> rs.getLong("resource_id"), directoryId, assetName);
         return r.stream().findFirst();
     }
 
@@ -128,40 +158,41 @@ public class ResourceRepository {
             storeId);
     }
 
-    public long createDirectory(long storeId, String name) {
+    public long createDirectory(long orgId, long storeId, String name) {
         KeyHolder kh = new GeneratedKeyHolder();
         jdbcTemplate.update(con -> {
             PreparedStatement ps = con.prepareStatement(
-                "INSERT INTO resource_directories (store_id, name) VALUES (?, ?)",
+                "INSERT INTO resource_directories (organization_id, store_id, name) VALUES (?, ?, ?)",
                 Statement.RETURN_GENERATED_KEYS);
-            ps.setLong(1, storeId);
-            ps.setString(2, name);
+            ps.setLong(1, orgId);
+            ps.setLong(2, storeId);
+            ps.setString(3, name);
             return ps;
         }, kh);
         return kh.getKey().longValue();
     }
 
-    public List<AssetView> listAssets(long storeId, long directoryId) {
+    public List<AssetView> listAssets(long directoryId) {
         return jdbcTemplate.query(
-            "SELECT a.id, a.name, r.mime_type, r.size_bytes, r.sha256 " +
+            "SELECT a.id, a.resource_id, a.name, r.mime_type, r.size_bytes, r.sha256 " +
             "FROM resource_assets a JOIN resources r ON r.id = a.resource_id " +
-            "WHERE a.store_id = ? AND a.directory_id = ? ORDER BY a.name",
-            (rs, i) -> new AssetView(rs.getLong("id"), rs.getString("name"),
+            "WHERE a.directory_id = ? ORDER BY a.name",
+            (rs, i) -> new AssetView(rs.getLong("id"), rs.getLong("resource_id"), rs.getString("name"),
                 rs.getString("mime_type"), rs.getLong("size_bytes"), rs.getString("sha256")),
-            storeId, directoryId);
+            directoryId);
     }
 
-    public void upsertAsset(long storeId, long directoryId, String name, long resourceId) {
+    public void upsertAsset(long directoryId, String name, long resourceId) {
         jdbcTemplate.update(
-            "INSERT INTO resource_assets (store_id, directory_id, name, resource_id) VALUES (?, ?, ?, ?) " +
+            "INSERT INTO resource_assets (directory_id, name, resource_id) VALUES (?, ?, ?) " +
             "ON DUPLICATE KEY UPDATE resource_id = VALUES(resource_id)",
-            storeId, directoryId, name, resourceId);
+            directoryId, name, resourceId);
     }
 
-    public boolean deleteAsset(long storeId, long directoryId, String name) {
+    public boolean deleteAsset(long directoryId, String name) {
         int rows = jdbcTemplate.update(
-            "DELETE FROM resource_assets WHERE store_id = ? AND directory_id = ? AND name = ?",
-            storeId, directoryId, name);
+            "DELETE FROM resource_assets WHERE directory_id = ? AND name = ?",
+            directoryId, name);
         return rows > 0;
     }
 
@@ -199,20 +230,19 @@ public class ResourceRepository {
         return rows > 0;
     }
 
-    // Moves a named asset from one directory to another within the same store.
-    public boolean moveAsset(long storeId, long fromDirId, long toDirId, String name) {
+    // Moves a named asset from one directory to another.
+    public boolean moveAsset(long fromDirId, long toDirId, String name) {
         int rows = jdbcTemplate.update(
-            "UPDATE resource_assets SET directory_id = ? " +
-            "WHERE store_id = ? AND directory_id = ? AND name = ?",
-            toDirId, storeId, fromDirId, name);
+            "UPDATE resource_assets SET directory_id = ? WHERE directory_id = ? AND name = ?",
+            toDirId, fromDirId, name);
         return rows > 0;
     }
 
     // Renames a named asset within the same directory.
-    public boolean renameAsset(long storeId, long directoryId, String oldName, String newName) {
+    public boolean renameAsset(long directoryId, String oldName, String newName) {
         int rows = jdbcTemplate.update(
-            "UPDATE resource_assets SET name = ? WHERE store_id = ? AND directory_id = ? AND name = ?",
-            newName, storeId, directoryId, oldName);
+            "UPDATE resource_assets SET name = ? WHERE directory_id = ? AND name = ?",
+            newName, directoryId, oldName);
         return rows > 0;
     }
 }

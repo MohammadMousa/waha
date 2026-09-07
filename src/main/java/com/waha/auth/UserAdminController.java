@@ -2,11 +2,13 @@ package com.waha.auth;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.waha.common.ErrorResponse;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -14,9 +16,10 @@ import java.util.Set;
 @RequestMapping("/api/admin/users")
 public class UserAdminController {
 
-    private static final Set<String> VALID_TYPES = Set.of("HUMAN", "KIOSK", "SYSTEM");
+    // users table = admin-app identities only: platform owner or org owner.
+    // Branch-level staff (BRANCH_ADMIN, OPERATOR, CASHIER) are employees, not users.
     private static final Set<String> VALID_ROLES = Set.of(
-        "SUPER_ADMIN", "ADMIN", "OPERATOR", "CASHIER", "REGISTERED", "ANONYMOUS"
+        "SUPER_ADMIN", "ORGANIZATION_OWNER"
     );
 
     private final UserRepository userRepository;
@@ -31,13 +34,27 @@ public class UserAdminController {
         this.sessionService = sessionService;
     }
 
+    @GetMapping("/roles")
+    public ResponseEntity<?> assignableRoles(
+            @RequestHeader(value = "Authorization", required = false) String auth) {
+        UserSession session = sessionService.requireSession(auth);
+        sessionService.requirePermissionForOrg(session, Permission.MANAGE_USERS, session.organizationId());
+        boolean isSuperAdmin = sessionService.resolvePermissions(session.userId(), null)
+            .contains(Permission.MANAGE_SYSTEM.name());
+        List<String> roles = isSuperAdmin
+            ? List.of("SUPER_ADMIN", "ORGANIZATION_OWNER")
+            : List.of("ORGANIZATION_OWNER");
+        return ResponseEntity.ok(roles);
+    }
+
     @GetMapping
     public ResponseEntity<?> list(
             @RequestHeader(value = "Authorization", required = false) String auth,
-            @RequestParam(required = false) String accountType) {
+            @RequestParam(required = false) String role) {
 
-        sessionService.requirePermission(auth, Permission.MANAGE_USERS, 1L);
-        return ResponseEntity.ok(userRepository.findAll(accountType).stream().map(this::toMap).toList());
+        UserSession session = sessionService.requireSession(auth);
+        sessionService.requirePermissionForOrg(session, Permission.MANAGE_USERS, session.organizationId());
+        return ResponseEntity.ok(userRepository.findAll(role, session.organizationId()).stream().map(this::toMap).toList());
     }
 
     @PostMapping
@@ -45,31 +62,22 @@ public class UserAdminController {
             @RequestHeader(value = "Authorization", required = false) String auth,
             @RequestBody JsonNode body) {
 
-        sessionService.requirePermission(auth, Permission.MANAGE_USERS, 1L);
+        UserSession session = sessionService.requireSession(auth);
+        sessionService.requirePermissionForOrg(session, Permission.MANAGE_USERS, session.organizationId());
 
         String username = body.has("username") ? body.get("username").asText("").trim() : "";
         String password = body.has("password") ? body.get("password").asText("").trim() : "";
         if (username.isEmpty() || password.isEmpty())
             return ResponseEntity.badRequest().body(new ErrorResponse("username and password are required"));
 
-        if (userRepository.existsByUsername(username))
+        long orgId = body.has("organizationId") ? body.get("organizationId").asLong(1L) : 1L;
+        if (userRepository.existsByUsername(username, orgId))
             return ResponseEntity.status(409).body(new ErrorResponse("Username already taken"));
 
-        String accountType = body.has("accountType") ? body.get("accountType").asText("HUMAN") : "HUMAN";
-        if (!VALID_TYPES.contains(accountType))
-            return ResponseEntity.badRequest().body(new ErrorResponse("accountType must be one of: " + VALID_TYPES));
+        long userId = userRepository.create(username, passwordEncoder.encode(password), orgId);
 
-        boolean enabled   = !body.has("enabled") || body.get("enabled").asBoolean(true);
-        String firstName  = body.has("firstName") ? body.get("firstName").asText(null) : null;
-        String lastName   = body.has("lastName")  ? body.get("lastName").asText(null)  : null;
-        String phone      = body.has("phone")     ? body.get("phone").asText(null)     : null;
-
-        long userId = userRepository.createAccount(
-            username, passwordEncoder.encode(password),
-            accountType, enabled, firstName, lastName, phone
-        );
-
-        assignRoleIfPresent(userId, body);
+        ResponseEntity<?> roleError = assignRoleIfPresent(userId, body, orgId, session);
+        if (roleError != null) return roleError;
 
         return ResponseEntity.ok(Map.of("id", userId));
     }
@@ -80,7 +88,8 @@ public class UserAdminController {
             @PathVariable long id,
             @RequestBody JsonNode body) {
 
-        sessionService.requirePermission(auth, Permission.MANAGE_USERS, 1L);
+        UserSession session = sessionService.requireSession(auth);
+        sessionService.requirePermissionForOrg(session, Permission.MANAGE_USERS, session.organizationId());
 
         if (!userRepository.existsById(id))
             return ResponseEntity.status(404).body(new ErrorResponse("User not found: " + id));
@@ -90,16 +99,30 @@ public class UserAdminController {
             if (!pw.isEmpty()) userRepository.updatePassword(id, passwordEncoder.encode(pw));
         }
 
-        userRepository.patch(id, body);
-
-        if (body.has("role") && body.has("storeId")) {
+        if (body.has("role")) {
             String roleName = body.get("role").asText("").toUpperCase();
-            long storeId = body.get("storeId").asLong(0);
-            if (VALID_ROLES.contains(roleName) && storeId > 0) {
-                for (Role r : Role.values()) {
-                    try { roleRepository.removeRole(id, r, storeId); } catch (Exception ignored) {}
+            if (VALID_ROLES.contains(roleName)) {
+                Role role = Role.valueOf(roleName);
+                boolean callerIsSuperAdmin = sessionService.resolvePermissions(session.userId(), null)
+                    .contains(Permission.MANAGE_SYSTEM.name());
+                if (role == Role.SUPER_ADMIN && !callerIsSuperAdmin) {
+                    return ResponseEntity.status(403).body(new ErrorResponse("Only SUPER_ADMIN can assign the SUPER_ADMIN role"));
                 }
-                roleRepository.assignRole(id, Role.valueOf(roleName), storeId);
+                boolean isSystem  = role == Role.SUPER_ADMIN;
+                boolean isCompany = role == Role.ORGANIZATION_OWNER;
+                long scopeId = isSystem ? 0L
+                    : isCompany ? session.organizationId()
+                    : (body.has("storeId") ? body.get("storeId").asLong(0) : 0L);
+                if (isSystem || isCompany || scopeId > 0) {
+                    for (Role r : Role.values()) {
+                        try { roleRepository.removeRole(id, r, scopeId); } catch (Exception ignored) {}
+                    }
+                    try {
+                        roleRepository.assignRole(id, role, scopeId);
+                    } catch (DataIntegrityViolationException e) {
+                        return ResponseEntity.badRequest().body(new ErrorResponse(extractTriggerMessage(e)));
+                    }
+                }
             }
         }
 
@@ -111,7 +134,8 @@ public class UserAdminController {
             @RequestHeader(value = "Authorization", required = false) String auth,
             @PathVariable long id) {
 
-        sessionService.requirePermission(auth, Permission.MANAGE_USERS, 1L);
+        UserSession session = sessionService.requireSession(auth);
+        sessionService.requirePermissionForOrg(session, Permission.MANAGE_USERS, session.organizationId());
 
         if (!userRepository.existsById(id))
             return ResponseEntity.status(404).body(new ErrorResponse("User not found: " + id));
@@ -122,24 +146,44 @@ public class UserAdminController {
 
     // ── helpers ───────────────────────────────────────────────────────────────
 
-    private void assignRoleIfPresent(long userId, JsonNode body) {
-        if (!body.has("role") || !body.has("storeId")) return;
+    private ResponseEntity<?> assignRoleIfPresent(long userId, JsonNode body, long orgId, UserSession caller) {
+        if (!body.has("role")) return null;
         String roleName = body.get("role").asText("").toUpperCase();
-        long storeId = body.get("storeId").asLong(0);
-        if (VALID_ROLES.contains(roleName) && storeId > 0) {
-            roleRepository.assignRole(userId, Role.valueOf(roleName), storeId);
+        if (!VALID_ROLES.contains(roleName)) return null;
+        Role role = Role.valueOf(roleName);
+
+        // Only SUPER_ADMIN can assign SUPER_ADMIN — org-owners cannot elevate to platform level.
+        boolean callerIsSuperAdmin = sessionService.resolvePermissions(caller.userId(), null)
+            .contains(Permission.MANAGE_SYSTEM.name());
+        if (role == Role.SUPER_ADMIN && !callerIsSuperAdmin) {
+            return ResponseEntity.status(403).body(new ErrorResponse("Only SUPER_ADMIN can assign the SUPER_ADMIN role"));
         }
+        boolean isSystem  = role == Role.SUPER_ADMIN;
+        boolean isCompany = role == Role.ORGANIZATION_OWNER;
+        long scopeId = isSystem ? 0L
+            : isCompany ? orgId
+            : (body.has("storeId") ? body.get("storeId").asLong(0) : 0L);
+        if (!isSystem && !isCompany && scopeId <= 0) return null;
+        try {
+            roleRepository.assignRole(userId, role, scopeId);
+        } catch (DataIntegrityViolationException e) {
+            return ResponseEntity.badRequest().body(new ErrorResponse(extractTriggerMessage(e)));
+        }
+        return null;
+    }
+
+    private static String extractTriggerMessage(DataIntegrityViolationException e) {
+        Throwable cause = e.getCause();
+        if (cause instanceof java.sql.SQLException sqlEx && sqlEx.getErrorCode() == 1644) {
+            return sqlEx.getMessage();
+        }
+        return e.getMessage();
     }
 
     private Map<String, Object> toMap(UserRepository.UserAdminView u) {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("id", u.id());
         m.put("username", u.username());
-        m.put("accountType", u.accountType());
-        m.put("enabled", u.enabled());
-        m.put("firstName", u.firstName());
-        m.put("lastName", u.lastName());
-        m.put("phone", u.phone());
         m.put("createdAt", u.createdAt() != null ? u.createdAt().toString() : null);
         m.put("roleName", u.roleName());
         m.put("storeId", u.storeId());

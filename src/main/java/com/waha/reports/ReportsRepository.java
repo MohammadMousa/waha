@@ -172,7 +172,7 @@ public class ReportsRepository {
 
     public List<Map<String, Object>> getKiosks() {
         return namedJdbc.queryForList(
-            "SELECT username FROM users WHERE account_type = 'KIOSK' AND enabled = TRUE ORDER BY username",
+            "SELECT username FROM devices WHERE enabled = TRUE ORDER BY username",
             Map.of()
         );
     }

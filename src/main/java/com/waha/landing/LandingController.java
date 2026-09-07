@@ -33,22 +33,23 @@ public class LandingController {
     @GetMapping("/{pageKey}")
     public ResponseEntity<?> getLandingPage(
             @RequestHeader(value = "Authorization", required = false) String auth,
-            @PathVariable String pageKey) {
+            @PathVariable String pageKey,
+            @RequestParam(value = "storeId", required = false) Long explicitStoreId) {
 
         if (!VALID_KEYS.contains(pageKey)) {
             return ResponseEntity.badRequest()
                 .body(Map.of("error", "Unknown page key: " + pageKey));
         }
 
-        Long sessionStoreId = sessionService.tryResolveSession(auth)
-            .map(s -> s.storeId())
-            .orElse(null);
+        // Prefer an explicit storeId (admin context) over session-derived store.
+        Long scopeStoreId = explicitStoreId != null ? explicitStoreId
+            : sessionService.tryResolveSession(auth).map(s -> s.storeId()).orElse(null);
 
         String assetName = pageKey + ".html";
 
-        // 1. Try local store override.
-        if (sessionStoreId != null && !sessionStoreId.equals(ROOT_STORE_ID)) {
-            Optional<ResolvedPage> local = resolve(sessionStoreId, assetName);
+        // 1. Try local store override (skip if scope IS the root store).
+        if (scopeStoreId != null && !scopeStoreId.equals(ROOT_STORE_ID)) {
+            Optional<ResolvedPage> local = resolve(scopeStoreId, assetName);
             if (local.isPresent()) return ResponseEntity.ok(local.get().toResponse(pageKey, "local"));
         }
 
@@ -63,7 +64,7 @@ public class LandingController {
         Optional<Long> dirId = resourceRepository.findDirectoryId(storeId, PAGES_DIR);
         if (dirId.isEmpty()) return Optional.empty();
 
-        Optional<Long> resourceId = resourceRepository.findAssetResourceId(storeId, dirId.get(), assetName);
+        Optional<Long> resourceId = resourceRepository.findAssetResourceId(dirId.get(), assetName);
         if (resourceId.isEmpty()) return Optional.empty();
 
         Optional<ResourceRepository.ResourceMeta> meta = resourceRepository.findMetaById(resourceId.get());
