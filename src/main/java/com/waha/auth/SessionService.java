@@ -151,6 +151,22 @@ public class SessionService {
         return roleRepository.resolvePermissionsForOrg(userId, orgId);
     }
 
+    // Resolves permissions for an employee without a specific store context —
+    // unions all roles the employee has across all branches.
+    public Set<String> resolveEmployeePermissionsUnified(long employeeId) {
+        return namedJdbc.query(
+            "SELECT DISTINCT r.name FROM employee_roles er JOIN roles r ON r.id = er.role_id WHERE er.employee_id = :eid",
+            Map.of("eid", employeeId),
+            (rs, i) -> rs.getString("name")
+        ).stream()
+         .flatMap(name -> {
+             try { return Permission.BY_ROLE.getOrDefault(Role.valueOf(name), Set.of()).stream(); }
+             catch (IllegalArgumentException e) { return java.util.stream.Stream.empty(); }
+         })
+         .map(Enum::name)
+         .collect(java.util.stream.Collectors.toSet());
+    }
+
     public void requirePermission(String authHeader, Permission permission, Long storeId) {
         UserSession session = requireSession(authHeader);
         Set<String> perms = resolveSessionPermissions(session, storeId);

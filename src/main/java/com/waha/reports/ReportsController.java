@@ -2,6 +2,8 @@ package com.waha.reports;
 
 import com.waha.auth.Permission;
 import com.waha.auth.SessionService;
+import com.waha.auth.UserSession;
+import com.waha.product.ProductRepository;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -15,10 +17,13 @@ public class ReportsController {
 
     private final ReportsRepository reportsRepository;
     private final SessionService sessionService;
+    private final ProductRepository productRepository;
 
-    public ReportsController(ReportsRepository reportsRepository, SessionService sessionService) {
+    public ReportsController(ReportsRepository reportsRepository, SessionService sessionService,
+                             ProductRepository productRepository) {
         this.reportsRepository = reportsRepository;
         this.sessionService = sessionService;
+        this.productRepository = productRepository;
     }
 
     // ── Filter dropdowns ──────────────────────────────────────────────────────
@@ -42,6 +47,16 @@ public class ReportsController {
             @RequestHeader(value = "Authorization", required = false) String auth) {
         sessionService.requirePermission(auth, Permission.VIEW_ALL_ORDERS, 1L);
         return ResponseEntity.ok(reportsRepository.getKiosks());
+    }
+
+    @GetMapping("/products")
+    public ResponseEntity<?> products(
+            @RequestHeader(value = "Authorization", required = false) String auth,
+            @RequestParam(required = false) String  search,
+            @RequestParam(required = false) Long    categoryId,
+            @RequestParam(required = false) Boolean active) {
+        UserSession session = sessionService.requireSession(auth);
+        return ResponseEntity.ok(productRepository.adminLookup(session.organizationId(), search, categoryId, active));
     }
 
     @GetMapping("/payment-methods")

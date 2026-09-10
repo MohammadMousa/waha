@@ -250,4 +250,25 @@ public class ProductRepository {
         boolean hasMore = results.size() > size;
         return new ProductPage(hasMore ? results.subList(0, size) : results, hasMore);
     }
+
+    public List<Map<String, Object>> adminLookup(long companyId, String search, Long categoryId, Boolean active) {
+        StringBuilder sql = new StringBuilder(
+            "SELECT id, name FROM products WHERE company_id = :companyId");
+        org.springframework.jdbc.core.namedparam.MapSqlParameterSource p =
+            new org.springframework.jdbc.core.namedparam.MapSqlParameterSource("companyId", companyId);
+        if (search != null && !search.isBlank()) {
+            sql.append(" AND name LIKE :search");
+            p.addValue("search", "%" + search.trim() + "%");
+        }
+        if (categoryId != null) {
+            sql.append(" AND category_id = :categoryId");
+            p.addValue("categoryId", categoryId);
+        }
+        if (active != null) {
+            sql.append(" AND active = :active");
+            p.addValue("active", active);
+        }
+        sql.append(" ORDER BY name LIMIT 100");
+        return jdbc.queryForList(sql.toString(), p);
+    }
 }

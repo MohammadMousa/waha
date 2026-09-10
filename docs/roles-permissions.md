@@ -256,6 +256,12 @@ All endpoints are scoped to the session's `organizationId`.
 
 ## API reference — POS app login
 
+Employee sessions have **no storeId in the session**. The working store is sent by
+the frontend as a field in each request that needs it (e.g. `POST /api/inventory/visits`
+body includes `"storeId"`). Permissions are resolved once at login from all the
+employee's roles across all branches and returned in the login response — no
+second call needed.
+
 ### `POST /api/pos/auth/login`
 ```json
 // Request
@@ -266,14 +272,20 @@ All endpoints are scoped to the session's `organizationId`.
   "token": "...",
   "employeeId": 3,
   "organizationId": 5,
-  "storeId": 5,
-  "mode": "NORMAL",
-  "permissions": ["VIEW_PRODUCTS", "PROCESS_ORDERS", "VIEW_ORDER_HISTORY", "VIEW_ALL_ORDERS", "VIEW_OWN_ORDERS"]
+  "permissions": ["VIEW_PRODUCTS", "PROCESS_ORDERS", "VIEW_INVENTORY", "PROCESS_INVENTORY"],
+  "stores": [
+    { "id": 5, "name": "alj", "displayName": {"ar": "الجزيرة", "en": "Aljazeera"} },
+    { "id": 6, "name": "epc", "displayName": {"ar": "بنك ايبك", "en": "EPC Bank"} }
+  ]
 }
 
 // 401 → {"message": "Invalid username or PIN"}
 // 401 → {"message": "Account is disabled"}
 ```
+
+`stores` — all stores the employee is assigned to (from `employee_stores`).
+Frontend uses this to show a branch picker; the chosen `storeId` is then sent
+with subsequent inventory calls. No store-selection API call is needed.
 
 ### `POST /api/pos/auth/logout`
 `Authorization` header, empty 200 body.
@@ -311,7 +323,7 @@ All endpoints are scoped to the session's `organizationId`.
 - Header: `Authorization: Bearer <token>` on every authenticated request
 - Token is opaque (not JWT) — looked up server-side on every call
 - TTL: 30 days (configurable via `waha.session.ttl-days`)
-- `storeId` from the session is used automatically whenever an endpoint accepts it
+- `storeId` in session: set for kiosk (device's store); always null for employee sessions — employees pass storeId per-request
 - `mode` in the session drives backend validation policy (`KIOSK` / `NORMAL`)
 
 ---

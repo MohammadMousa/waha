@@ -19,10 +19,11 @@ public class ConfigController {
         this.sessionService = sessionService;
     }
 
-    // Public — no auth. Returns global (org=0) system_properties.
+    // Public — no auth. Returns global (org=0) properties merged with org-specific ones.
+    // If orgId is provided, org-specific values override global ones on the same key.
     @GetMapping
-    public ResponseEntity<?> get() {
-        return ResponseEntity.ok(configService.findAllProperties(0L));
+    public ResponseEntity<?> get(@RequestParam(required = false) Long orgId) {
+        return ResponseEntity.ok(configService.findAllProperties(orgId != null ? orgId : 0L));
     }
 
     // Admin — requires MANAGE_STORES. Updates a system property (always global, org=0).

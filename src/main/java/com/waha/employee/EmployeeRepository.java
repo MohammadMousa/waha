@@ -65,6 +65,17 @@ public class EmployeeRepository {
         return results.stream().findFirst();
     }
 
+    public Map<String, Object> findProfileForSession(long employeeId) {
+        List<Map<String, Object>> rows = namedJdbc.queryForList(
+            "SELECT CONCAT(COALESCE(e.first_name,''), ' ', COALESCE(e.last_name,'')) AS employeeName, " +
+            "       (SELECT r.name FROM employee_roles er JOIN roles r ON r.id = er.role_id " +
+            "        WHERE er.employee_id = e.id ORDER BY er.role_id LIMIT 1) AS roleName " +
+            "FROM employees e WHERE e.id = :id",
+            Map.of("id", employeeId)
+        );
+        return rows.isEmpty() ? Map.of() : rows.get(0);
+    }
+
     public Optional<Employee> findById(long id) {
         List<Employee> results = namedJdbc.query(
             "SELECT id, organization_id, username FROM employees WHERE id = :id",
@@ -118,7 +129,7 @@ public class EmployeeRepository {
 
     public List<Map<String, Object>> findStores(long employeeId) {
         return namedJdbc.queryForList(
-            "SELECT s.id, s.name FROM employee_stores es JOIN stores s ON s.id = es.store_id " +
+            "SELECT s.id, s.name, s.display_name FROM employee_stores es JOIN stores s ON s.id = es.store_id " +
             "WHERE es.employee_id = :id ORDER BY s.name",
             Map.of("id", employeeId)
         );

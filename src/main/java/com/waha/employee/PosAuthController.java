@@ -1,11 +1,13 @@
 package com.waha.employee;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.waha.auth.SessionService;
 import com.waha.common.ErrorResponse;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -15,10 +17,12 @@ public class PosAuthController {
 
     private final EmployeeRepository employeeRepository;
     private final SessionService sessionService;
+    private final ObjectMapper objectMapper;
 
-    public PosAuthController(EmployeeRepository employeeRepository, SessionService sessionService) {
+    public PosAuthController(EmployeeRepository employeeRepository, SessionService sessionService, ObjectMapper objectMapper) {
         this.employeeRepository = employeeRepository;
         this.sessionService = sessionService;
+        this.objectMapper = objectMapper;
     }
 
     @PostMapping("/login")
@@ -41,21 +45,32 @@ public class PosAuthController {
         long employeeId = auth.get().id();
         String token = sessionService.createEmployeeSession(employeeId);
 
-        Long storeId = employeeRepository.findPrimaryStoreId(employeeId).orElse(null);
-        if (storeId != null) sessionService.setStore(token, storeId);
+        Set<String> permissions = sessionService.resolveEmployeePermissionsUnified(employeeId);
+        Map<String, Object> profile = employeeRepository.findProfileForSession(employeeId);
 
-        Set<String> permissions = storeId != null
-            ? employeeRepository.resolvePermissions(employeeId, storeId)
-            : Set.of();
+        List<Map<String, Object>> storesMapped = employeeRepository.findStores(employeeId).stream().map(s -> {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("id",          s.get("id"));
+            m.put("name",        s.get("name"));
+            m.put("displayName", parseJsonName((String) s.get("display_name")));
+            return m;
+        }).toList();
 
         Map<String, Object> resp = new LinkedHashMap<>();
         resp.put("token",          token);
         resp.put("employeeId",     employeeId);
         resp.put("organizationId", auth.get().organizationId());
-        resp.put("storeId",        storeId);
-        resp.put("mode",           "NORMAL");
+        resp.put("employeeName",   profile.getOrDefault("employeeName", null));
+        resp.put("roleName",       profile.getOrDefault("roleName", null));
         resp.put("permissions",    permissions);
+        resp.put("stores",         storesMapped);
         return ResponseEntity.ok(resp);
+    }
+
+    private Object parseJsonName(String json) {
+        if (json == null) return null;
+        try { return objectMapper.readValue(json, Object.class); }
+        catch (Exception e) { return json; }
     }
 
     @PostMapping("/logout")
