@@ -1,6 +1,7 @@
 package com.waha.landing;
 
 import com.waha.auth.SessionService;
+import com.waha.auth.UserSession;
 import com.waha.resource.ResourceRepository;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
@@ -10,8 +11,9 @@ import java.util.Optional;
 import java.util.Set;
 
 // Resolves dynamic landing pages stored in the resource library.
-// Local store page overrides the global root page (id=0).
-// Returns a resource URL + content hash — Flutter loads the URL, backend serves the HTML.
+// A branch's local page (if any) overrides its organization's global page
+// (store_id IS NULL). Returns a resource URL + content hash — Flutter loads the
+// URL, backend serves the HTML.
 @RestController
 @RequestMapping("/api/landing")
 public class LandingController {
@@ -19,7 +21,6 @@ public class LandingController {
     private static final Set<String> VALID_KEYS = Set.of(
         "KIOSK_LANDING", "SHOPPING_LANDING", "CLIENT_LANDING", "ADMIN_LANDING"
     );
-    private static final long ROOT_STORE_ID = 1L;
     private static final String PAGES_DIR = "pages";
 
     private final ResourceRepository resourceRepository;
@@ -41,26 +42,39 @@ public class LandingController {
                 .body(Map.of("error", "Unknown page key: " + pageKey));
         }
 
-        // Prefer an explicit storeId (admin context) over session-derived store.
+        Optional<UserSession> session = sessionService.tryResolveSession(auth);
+
+        // Prefer an explicit storeId (admin previewing one specific branch) over the
+        // session's own store. Neither present -> no local override, go straight to
+        // the org's global page.
         Long scopeStoreId = explicitStoreId != null ? explicitStoreId
-            : sessionService.tryResolveSession(auth).map(s -> s.storeId()).orElse(null);
+            : session.map(UserSession::storeId).orElse(null);
 
         String assetName = pageKey + ".html";
 
-        // 1. Try local store override (skip if scope IS the root store).
-        if (scopeStoreId != null && !scopeStoreId.equals(ROOT_STORE_ID)) {
-            Optional<ResolvedPage> local = resolve(scopeStoreId, assetName);
+        // 1. Local branch override, if the requested/session store has one.
+        if (scopeStoreId != null) {
+            Optional<ResolvedPage> local = resolveLocal(scopeStoreId, assetName);
             if (local.isPresent()) return ResponseEntity.ok(local.get().toResponse(pageKey, "local"));
         }
 
-        // 2. Fall back to root store global default.
-        Optional<ResolvedPage> global = resolve(ROOT_STORE_ID, assetName);
+        // 2. Organization-level global default. The org comes from the authenticated
+        // caller's own session where available (works even with no store in scope at
+        // all — e.g. admin explicitly asking for global), falling back to the scoped
+        // store's org otherwise.
+        Long orgId = session.map(UserSession::organizationId)
+            .orElseGet(() -> scopeStoreId != null
+                ? resourceRepository.findOrgIdByStoreId(scopeStoreId).orElse(null)
+                : null);
+        if (orgId == null) return ResponseEntity.notFound().build();
+
+        Optional<ResolvedPage> global = resolveGlobal(orgId, assetName);
         if (global.isPresent()) return ResponseEntity.ok(global.get().toResponse(pageKey, "global"));
 
         return ResponseEntity.notFound().build();
     }
 
-    private Optional<ResolvedPage> resolve(long storeId, String assetName) {
+    private Optional<ResolvedPage> resolveLocal(long storeId, String assetName) {
         Optional<Long> dirId = resourceRepository.findDirectoryId(storeId, PAGES_DIR);
         if (dirId.isEmpty()) return Optional.empty();
 
@@ -71,16 +85,37 @@ public class LandingController {
         if (meta.isEmpty()) return Optional.empty();
 
         String storeName = resourceRepository.findStoreNameById(storeId).orElse(String.valueOf(storeId));
-        return Optional.of(new ResolvedPage(storeName, meta.get().sha256()));
+        // Branch scope is always the 4-segment form — a branch keeps its own store_id
+        // regardless of whether its name happens to coincide with the org's slug.
+        String orgSlug = resourceRepository.findOrgSlugByStoreId(storeId).orElse(storeName);
+        String resourceUrl = "/resource/" + orgSlug + "/" + storeName + "/" + PAGES_DIR + "/" + assetName;
+
+        return Optional.of(new ResolvedPage(storeName, resourceUrl, meta.get().sha256()));
     }
 
-    private record ResolvedPage(String storeName, String sha256) {
+    private Optional<ResolvedPage> resolveGlobal(long orgId, String assetName) {
+        Optional<Long> dirId = resourceRepository.findDirectoryIdGlobal(orgId, PAGES_DIR);
+        if (dirId.isEmpty()) return Optional.empty();
+
+        Optional<Long> resourceId = resourceRepository.findAssetResourceId(dirId.get(), assetName);
+        if (resourceId.isEmpty()) return Optional.empty();
+
+        Optional<ResourceRepository.ResourceMeta> meta = resourceRepository.findMetaById(resourceId.get());
+        if (meta.isEmpty()) return Optional.empty();
+
+        String orgSlug = resourceRepository.findOrgSlugById(orgId).orElse(String.valueOf(orgId));
+        String resourceUrl = "/resource/" + orgSlug + "/" + PAGES_DIR + "/" + assetName;
+
+        return Optional.of(new ResolvedPage(orgSlug, resourceUrl, meta.get().sha256()));
+    }
+
+    private record ResolvedPage(String scopeName, String resourceUrl, String sha256) {
         Map<String, Object> toResponse(String pageKey, String scope) {
             return Map.of(
                 "page_key", pageKey,
                 "scope", scope,
-                "store", storeName,
-                "resource_url", "/resource/" + storeName + "/" + PAGES_DIR + "/" + pageKey + ".html",
+                "store", scopeName,
+                "resource_url", resourceUrl,
                 "content_hash", sha256
             );
         }

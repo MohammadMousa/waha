@@ -137,10 +137,25 @@ public class ResourceRepository {
         return r.stream().findFirst();
     }
 
+    public Optional<String> findOrgSlugById(long orgId) {
+        List<String> r = jdbcTemplate.query(
+            "SELECT slug FROM organizations WHERE id = ? LIMIT 1",
+            (rs, i) -> rs.getString("slug"), orgId);
+        return r.stream().findFirst();
+    }
+
     public Optional<Long> findDirectoryId(long storeId, String dirName) {
         List<Long> r = jdbcTemplate.query(
             "SELECT id FROM resource_directories WHERE store_id = ? AND name = ? LIMIT 1",
             (rs, i) -> rs.getLong("id"), storeId, dirName);
+        return r.stream().findFirst();
+    }
+
+    // Org-level (global) directory — owned directly by the org, no branch (store_id IS NULL).
+    public Optional<Long> findDirectoryIdGlobal(long orgId, String dirName) {
+        List<Long> r = jdbcTemplate.query(
+            "SELECT id FROM resource_directories WHERE organization_id = ? AND store_id IS NULL AND name = ? LIMIT 1",
+            (rs, i) -> rs.getLong("id"), orgId, dirName);
         return r.stream().findFirst();
     }
 
@@ -158,14 +173,25 @@ public class ResourceRepository {
             storeId);
     }
 
-    public long createDirectory(long orgId, long storeId, String name) {
+    // Org-level (global) directories — store_id IS NULL.
+    public List<DirectoryView> listDirectoriesGlobal(long orgId) {
+        return jdbcTemplate.query(
+            "SELECT id, name FROM resource_directories WHERE organization_id = ? AND store_id IS NULL ORDER BY name",
+            (rs, i) -> new DirectoryView(rs.getLong("id"), rs.getString("name")),
+            orgId);
+    }
+
+    // storeId null → org-level (global) directory. Uniqueness is enforced by the
+    // DB's (organization_id, COALESCE(store_id, 0), name) index either way.
+    public long createDirectory(long orgId, Long storeId, String name) {
         KeyHolder kh = new GeneratedKeyHolder();
         jdbcTemplate.update(con -> {
             PreparedStatement ps = con.prepareStatement(
                 "INSERT INTO resource_directories (organization_id, store_id, name) VALUES (?, ?, ?)",
                 Statement.RETURN_GENERATED_KEYS);
             ps.setLong(1, orgId);
-            ps.setLong(2, storeId);
+            if (storeId != null) ps.setLong(2, storeId);
+            else ps.setNull(2, java.sql.Types.BIGINT);
             ps.setString(3, name);
             return ps;
         }, kh);

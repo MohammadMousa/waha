@@ -27,7 +27,7 @@ Notes:
 
 | Segment | Example | Description |
 |---------|---------|-------------|
-| `org` | `waha` | Organization slug (`organizations.name`) |
+| `org` | `waha` | Organization slug (`organizations.slug`) |
 | `branch` | `north-branch` | Branch store slug (`stores.name`), present only for branch-level resources |
 | `directory` | `pages` | Directory name (alphanumeric + hyphens/underscores) |
 | `name` | `KIOSK_LANDING.html` | Asset filename including extension |
@@ -40,7 +40,7 @@ Notes:
 /resource/waha/north-branch/images/banner.jpg    ← branch-specific image
 ```
 
-**Constraint:** store names must not collide with directory names (`pages`, `images`, `products`, etc.). Validated on store creation.
+The two shapes are told apart purely by segment count — two distinct route templates, matched before any lookup runs. A branch's name is never compared against its org's slug to decide which shape applies, so a branch is free to be named anything, including something that happens to match the org's slug.
 
 ---
 
@@ -48,15 +48,16 @@ Notes:
 
 ### 3-segment path (org-level): `/resource/{org}/{dir}/{name}`
 
-1. `SELECT id FROM organizations WHERE name = :org` → `orgId`
-2. `SELECT id FROM stores WHERE organization_id = :orgId AND name = :org` → `storeId` (global store has same name as org)
-3. `SELECT id FROM resource_directories WHERE store_id = :storeId AND name = :dir` → `dirId`
-4. `SELECT resource_id FROM resource_assets WHERE directory_id = :dirId AND name = :name` → `resourceId`
-5. Serve bytes with ETag + long-cache headers.
+1. `SELECT id FROM organizations WHERE slug = :org` → `orgId`
+2. `SELECT id FROM resource_directories WHERE organization_id = :orgId AND store_id IS NULL AND name = :dir` → `dirId`
+3. `SELECT resource_id FROM resource_assets WHERE directory_id = :dirId AND name = :name` → `resourceId`
+4. Serve bytes with ETag + long-cache headers.
+
+Org-level directories are owned directly by the organization — `store_id IS NULL` — not by a store that happens to share the org's name. That's the only signal for "this is global"; it's never inferred by comparing a name or slug against anything.
 
 ### 4-segment path (branch-level): `/resource/{org}/{branch}/{dir}/{name}`
 
-1. `SELECT id FROM organizations WHERE name = :org` → `orgId`
+1. `SELECT id FROM organizations WHERE slug = :org` → `orgId`
 2. `SELECT id FROM stores WHERE organization_id = :orgId AND name = :branch` → `storeId`
 3. `SELECT id FROM resource_directories WHERE store_id = :storeId AND name = :dir` → `dirId`
 4. `SELECT resource_id FROM resource_assets WHERE directory_id = :dirId AND name = :name` → `resourceId`
@@ -92,10 +93,11 @@ Split table so metadata queries never load binary content.
 |--------|------|-------|
 | `id` | bigint PK | |
 | `organization_id` | bigint FK → organizations | owning org |
-| `store_id` | bigint FK → stores | owning store |
+| `store_id` | bigint NULL, FK → stores | owning branch — **NULL means org-level (global)** |
 | `name` | varchar(100) | alphanumeric + hyphens/underscores |
+| `store_id_key` | bigint, generated (`COALESCE(store_id, 0)`) | uniqueness helper, see below |
 
-**Unique constraint:** `(store_id, name)`
+**Unique constraint:** `(organization_id, store_id_key, name)`. `store_id` is nullable so a directory can be owned by the org itself with no branch at all; `store_id_key` exists only because MySQL's own `UNIQUE` treats two `NULL`s as distinct, which would let one org create the same "global" directory name twice — the generated column collapses `NULL` to `0` so uniqueness actually holds for org-level rows too.
 
 ### `resource_assets`
 | Column | Type | Notes |
@@ -147,12 +149,19 @@ Split table so metadata queries never load binary content.
 | `GET` | `/api/resources/{store}/directories` | List directories for a store |
 | `POST` | `/api/resources/{store}/directories` | Create directory (`{"name": "pages"}`) |
 | `GET` | `/api/resources/{store}/directories/{dir}` | List assets in directory |
-| `POST` | `/api/resources/{store}/directories/{dir}` | Upload asset (multipart `file`, optional `name`) |
+| `POST` | `/api/resources/{store}/directories/{dir}` | Upload asset (multipart `file`, optional `name`) — creates `{dir}` first if it doesn't exist yet |
 | `PATCH` | `/api/resources/{store}/directories/{dir}/{name}/move` | Move asset to another directory |
 | `PATCH` | `/api/resources/{store}/directories/{dir}/{name}/rename` | Rename asset |
 | `DELETE` | `/api/resources/{store}/directories/{dir}/{name}` | Delete asset |
 
-The `{store}` segment in admin paths is the store slug (`stores.name`). For org-level (global) resources use the org's global store slug (same as the org name). The response from upload includes `url` — the correct public URL for the asset.
+`{store}` is resolved as a real branch's store name first; if nothing matches, it's tried as an organization's slug, which scopes every call in that request to that org's global (`store_id IS NULL`) resources instead of a branch. The response from upload includes `url` — the correct public URL for the asset, in whichever of the two shapes matches the resolved scope.
+
+### Landing pages (`/api/landing`, requires session auth)
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/api/landing/{pageKey}?storeId=` | Resolve a landing page's resource URL + content hash |
+
+`storeId` is optional and only ever means "also check this branch for a local override" — omitting it (or the branch having none) resolves straight to the organization's global page. The organization itself always comes from the authenticated caller's own session, never from `storeId`, so a caller with no store in scope at all can still reach its org's global page.
 
 ---
 
@@ -160,12 +169,19 @@ The `{store}` segment in admin paths is the store slug (`stores.name`). For org-
 
 | # | Decision |
 |---|----------|
-| 1 | **Org name = global store name.** The global store for an org has the same slug as the org (e.g., org `waha` → global store `waha`). This makes 3-segment URLs natural: `/resource/waha/pages/X` reads as "org waha, pages directory, file X". |
-| 2 | **Branch names must not collide with directory names.** The 3-segment vs 4-segment distinction relies on the second segment being unambiguously a branch name or a directory name. Store creation must reject names that match common directory names (`pages`, `images`, `products`, etc.). |
+| 1 | **Global scope is `store_id IS NULL`, full stop.** Never inferred from a name or slug matching anything — an org's slug and a branch's name are independent strings that can legitimately coincide, and once did in production, which is exactly what broke resolution before this was fixed. If you need to check "is this global", check for `NULL`, not equality. |
+| 2 | **A store name changing, or an org's slug changing, does not retroactively update anything.** Absolute `/resource/...` links already baked into saved resource bytes (HTML pages especially) keep whatever identifier was current when they were saved. The admin landing/ad editors re-derive and heal those links against the *current* scope every time a page is reopened and re-saved, but a page that's never reopened stays on the old identifier indefinitely — this isn't a background migration, and there isn't one. |
 | 3 | **No draft/publish workflow.** Last-write-wins. Use a `drafts` directory for staging. |
 | 4 | **No versioning.** Re-upload to update. |
 | 5 | **Content-addressed deduplication.** Same bytes → same resource row. Multiple asset entries can point to the same resource id. |
 
 ---
 
-*Last updated: 2026-09-07*
+## Known limitations
+
+- `ResourceAdminController`'s branch-name lookup (resolving `{store}` to a store id) is not scoped by organization — it matches by name across *all* orgs. Harmless while a single organization exists; a real collision risk the moment a second org is added. Not fixed yet.
+- `waha_admin`'s products, categories, and employee-avatar screens still key their shared image bucket off a hardcoded `'waha'` store name rather than the org-relative scoping described above. Same underlying pattern this doc now warns against, just not yet migrated for those resource types.
+
+---
+
+*Last updated: 2026-09-12*

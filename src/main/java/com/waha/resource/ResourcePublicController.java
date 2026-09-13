@@ -11,9 +11,11 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RestController;
 
 // Public — no auth. Two URL shapes:
-//   /resource/{org}/{dir}/{name}           — org-level (global store)
-//   /resource/{org}/{branch}/{dir}/{name}  — branch-level
-// Resolution: org name → store_id (via org+branch or org's global store) → dir_id → resource.
+//   /resource/{org}/{dir}/{name}           — org-level (global): directory owned
+//                                             directly by the org, store_id IS NULL.
+//   /resource/{org}/{branch}/{dir}/{name}  — branch-level: directory owned by a store.
+// The two shapes are disambiguated purely by segment count (distinct route templates),
+// never by comparing names/slugs — a branch's name may coincide with its org's slug.
 @RestController
 public class ResourcePublicController {
 
@@ -33,11 +35,11 @@ public class ResourcePublicController {
         var orgId = resourceRepository.findOrgIdBySlug(org);
         if (orgId.isEmpty()) return notFound(org + "/" + directory + "/" + name);
 
-        // Global store: store whose name matches the org name.
-        var storeId = resourceRepository.findStoreIdByOrgAndName(orgId.get(), org);
-        if (storeId.isEmpty()) return notFound(org + "/" + directory + "/" + name);
+        // Org-level (global) resource: owned directly by the org, no branch (store_id IS NULL).
+        var dirId = resourceRepository.findDirectoryIdGlobal(orgId.get(), directory);
+        if (dirId.isEmpty()) return notFound(org + "/" + directory + "/" + name);
 
-        return serve(storeId.get(), directory, name, org + "/" + directory + "/" + name, ifNoneMatch);
+        return serveFromDirectory(dirId.get(), name, org + "/" + directory + "/" + name, ifNoneMatch);
     }
 
     @GetMapping("/resource/{org}/{branch}/{directory}/{name}")
@@ -60,8 +62,11 @@ public class ResourcePublicController {
     private ResponseEntity<?> serve(long storeId, String directory, String name, String displayPath, String ifNoneMatch) {
         var dirId = resourceRepository.findDirectoryId(storeId, directory);
         if (dirId.isEmpty()) return notFound(displayPath);
+        return serveFromDirectory(dirId.get(), name, displayPath, ifNoneMatch);
+    }
 
-        var resourceId = resourceRepository.findAssetResourceId(dirId.get(), name);
+    private ResponseEntity<?> serveFromDirectory(long dirId, String name, String displayPath, String ifNoneMatch) {
+        var resourceId = resourceRepository.findAssetResourceId(dirId, name);
         if (resourceId.isEmpty()) return notFound(displayPath);
 
         var meta = resourceRepository.findMetaById(resourceId.get());

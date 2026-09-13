@@ -1,6 +1,6 @@
 # Landing Pages
 
-Each browsing mode has its own HTML landing page served from the root store's resource tree. The app shows the page immediately from local cache, then updates it in the background once auth resolves.
+Each browsing mode has its own HTML landing page, resolved per organization with an optional per-branch override — see `resource-management.md` for the underlying URL scheme and data model. The app shows the page immediately from local cache, then updates it in the background once auth resolves.
 
 ---
 
@@ -17,10 +17,10 @@ Each browsing mode has its own HTML landing page served from the root store's re
 
 ## File location
 
-All pages live in the root store (ID = 1) under the `pages` directory:
+Global pages live directly under the organization — no store row involved (`store_id IS NULL` in `resource_directories`), in a `pages` directory owned by the org itself:
 
 ```
-ROOT STORE (id = 1)
+ORGANIZATION (global — store_id IS NULL)
 └── pages/
     ├── KIOSK_LANDING.html
     ├── SHOPPING_LANDING.html
@@ -28,7 +28,7 @@ ROOT STORE (id = 1)
     └── ADMIN_LANDING.html
 ```
 
-Upload via the Resource Manager. A store-specific override can be placed in any child store's `pages/` directory — the backend checks the session store first, then falls back to root.
+Upload via the Resource Manager, scoped to the organization rather than any branch. A branch-specific override can be placed in that branch's own `pages/` directory — the backend checks the session's branch first, then falls back to the organization's global page. There is no "root store" — that was a fixed store id (1) standing in for global scope, and it's gone; global is a property of the organization, not of any particular store.
 
 ---
 
@@ -45,12 +45,12 @@ Response:
   "page_key": "KIOSK_LANDING",
   "scope": "local",
   "store": "waha",
-  "resource_url": "/api/resources/content/...",
+  "resource_url": "/resource/waha_corp/waha/pages/KIOSK_LANDING.html",
   "content_hash": "sha256:..."
 }
 ```
 
-`scope` is `"local"` when the session store has its own override, `"global"` when falling back to root. Returns `404` when no page is configured for that key in any store.
+`scope` is `"local"` when the session's branch has its own override, `"global"` when falling back to the organization's page (`resource_url` then has no branch segment, e.g. `/resource/waha_corp/pages/KIOSK_LANDING.html`). The organization is always the authenticated caller's own org — never inferred from `storeId` — so a caller with no branch in scope at all can still resolve straight to global. Returns `404` when no page is configured for that key anywhere in the chain.
 
 ---
 
@@ -74,7 +74,9 @@ The `contentHash` in `LocalPrefs` is the sole freshness signal — the HTML file
 
 ### Image URL portability
 
-Landing page HTML is saved with **root-relative** image paths (e.g. `src="/resource/waha/pages-res/banner.jpg"`), never absolute URLs. `resolveAbsolutePaths()` rewrites them to the correct server origin at display time. This means the cached file works even if the server IP changes between when an admin saved the page and when the kiosk loads it.
+Landing page HTML is saved with **root-relative** image paths (e.g. `src="/resource/waha_corp/waha/res/banner.jpg"`), never absolute URLs. `resolveAbsolutePaths()` rewrites them to the correct server origin at display time — see `waha_platform/docs/landing-page-rendering.md` for exactly how, and why that alone isn't the whole story on every platform. This means the cached file works even if the server IP changes between when an admin saved the page and when the kiosk loads it.
+
+Root-relative is not the same guarantee across an *organization or branch rename*, though: the org/branch identifiers themselves are baked into that path. See the "Decisions" table in `resource-management.md` — reopening and re-saving a page through the admin editor heals it, but nothing does that automatically in the background.
 
 ### Cache expiry — when does a re-check happen?
 
@@ -101,7 +103,7 @@ At startup the app doesn't know the user's role yet. It reads `LocalPrefs.landin
 
 The page is loaded via `WebViewController.loadHtmlString(html, baseUrl: <serverOrigin>)`, so:
 
-- Relative URLs (e.g. `<img src="/api/resources/content/...">`) resolve against the server origin.
+- Relative URLs (e.g. `<img src="/resource/waha_corp/waha/res/banner.jpg">`) resolve against the server origin.
 - Absolute `https://` URLs work normally.
 - JavaScript is enabled (`JavaScriptMode.unrestricted`).
 

@@ -13,9 +13,14 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import java.util.Map;
+import java.util.Optional;
 
 // Admin endpoints for the named resource library.
-// All require EDIT_RESOURCES permission at the target store.
+// {store} is either a real branch's store name (branch scope) or its organization's
+// slug (org-level / global scope, store_id IS NULL). Never inferred by comparing the
+// two — always resolved explicitly per-request via resolveScope().
+// All require EDIT_RESOURCES permission at the target store (branch scope) or org
+// (global scope).
 @RestController
 @RequestMapping("/api/resources/{store}")
 public class ResourceAdminController {
@@ -34,10 +39,14 @@ public class ResourceAdminController {
     public ResponseEntity<?> listDirectories(
             @RequestHeader(value = "Authorization", required = false) String auth,
             @PathVariable String store) {
-        var storeId = resolveStore(store);
-        if (storeId == null) return storeNotFound(store);
-        sessionService.requirePermission(auth, Permission.EDIT_RESOURCES, storeId);
-        return ResponseEntity.ok(resourceRepository.listDirectories(storeId));
+        var scope = resolveScope(store);
+        if (scope == null) return storeNotFound(store);
+        requireScopePermission(auth, scope);
+
+        var directories = scope.isGlobal()
+            ? resourceRepository.listDirectoriesGlobal(scope.orgId())
+            : resourceRepository.listDirectories(scope.storeId());
+        return ResponseEntity.ok(directories);
     }
 
     @PostMapping("/directories")
@@ -45,9 +54,9 @@ public class ResourceAdminController {
             @RequestHeader(value = "Authorization", required = false) String auth,
             @PathVariable String store,
             @RequestBody Map<String, String> body) {
-        var storeId = resolveStore(store);
-        if (storeId == null) return storeNotFound(store);
-        sessionService.requirePermission(auth, Permission.EDIT_RESOURCES, storeId);
+        var scope = resolveScope(store);
+        if (scope == null) return storeNotFound(store);
+        requireScopePermission(auth, scope);
 
         String name = body.get("name");
         if (name == null || name.isBlank()) {
@@ -58,8 +67,7 @@ public class ResourceAdminController {
                 new ErrorResponse("Directory name may only contain letters, digits, hyphens, and underscores"));
         }
         try {
-            long orgId = resourceRepository.findOrgIdByStoreId(storeId).orElse(1L);
-            long id = resourceRepository.createDirectory(orgId, storeId, name.toLowerCase());
+            long id = resourceRepository.createDirectory(scope.orgId(), scope.storeId(), name.toLowerCase());
             return ResponseEntity.ok(Map.of("id", id, "name", name.toLowerCase()));
         } catch (Exception e) {
             if (e.getMessage() != null && e.getMessage().contains("Duplicate")) {
@@ -76,11 +84,11 @@ public class ResourceAdminController {
             @RequestHeader(value = "Authorization", required = false) String auth,
             @PathVariable String store,
             @PathVariable String dir) {
-        var storeId = resolveStore(store);
-        if (storeId == null) return storeNotFound(store);
-        sessionService.requirePermission(auth, Permission.EDIT_RESOURCES, storeId);
+        var scope = resolveScope(store);
+        if (scope == null) return storeNotFound(store);
+        requireScopePermission(auth, scope);
 
-        var dirId = resourceRepository.findDirectoryId(storeId, dir);
+        var dirId = findDirectoryId(scope, dir);
         if (dirId.isEmpty()) return dirNotFound(store, dir);
         return ResponseEntity.ok(resourceRepository.listAssets(dirId.get()));
     }
@@ -92,12 +100,17 @@ public class ResourceAdminController {
             @PathVariable String dir,
             @RequestParam("file") MultipartFile file,
             @RequestParam(value = "name", required = false) String nameOverride) {
-        var storeId = resolveStore(store);
-        if (storeId == null) return storeNotFound(store);
-        sessionService.requirePermission(auth, Permission.EDIT_RESOURCES, storeId);
+        var scope = resolveScope(store);
+        if (scope == null) return storeNotFound(store);
+        requireScopePermission(auth, scope);
 
-        var dirId = resourceRepository.findDirectoryId(storeId, dir);
-        if (dirId.isEmpty()) return dirNotFound(store, dir);
+        // Auto-create the directory on first save — e.g. a brand-new org has no
+        // global "pages" directory yet until its first global page is saved.
+        var dirId = findDirectoryId(scope, dir);
+        if (dirId.isEmpty()) {
+            if (!dir.matches("[a-zA-Z0-9_\\-]+")) return dirNotFound(store, dir);
+            dirId = Optional.of(resourceRepository.createDirectory(scope.orgId(), scope.storeId(), dir));
+        }
 
         if (file.isEmpty()) return ResponseEntity.badRequest().body(new ErrorResponse("file is required"));
 
@@ -121,12 +134,10 @@ public class ResourceAdminController {
 
         resourceRepository.upsertAsset(dirId.get(), assetName, resourceId);
 
-        // Org-level (global) store: store name = org name → 3-segment URL.
-        // Branch store: store name ≠ org name → 4-segment URL with org prefix.
-        String orgSlug = resourceRepository.findOrgSlugByStoreId(storeId).orElse(null);
-        String publicUrl = (orgSlug != null && orgSlug.equals(store))
-            ? "/resource/" + store + "/" + dir + "/" + assetName
-            : "/resource/" + (orgSlug != null ? orgSlug : store) + "/" + store + "/" + dir + "/" + assetName;
+        String orgSlug = resourceRepository.findOrgSlugById(scope.orgId()).orElse(store);
+        String publicUrl = scope.isGlobal()
+            ? "/resource/" + orgSlug + "/" + dir + "/" + assetName
+            : "/resource/" + orgSlug + "/" + store + "/" + dir + "/" + assetName;
 
         return ResponseEntity.ok(Map.of(
             "name", assetName,
@@ -143,18 +154,18 @@ public class ResourceAdminController {
             @PathVariable String dir,
             @PathVariable String name,
             @RequestBody Map<String, String> body) {
-        var storeId = resolveStore(store);
-        if (storeId == null) return storeNotFound(store);
-        sessionService.requirePermission(auth, Permission.EDIT_RESOURCES, storeId);
+        var scope = resolveScope(store);
+        if (scope == null) return storeNotFound(store);
+        requireScopePermission(auth, scope);
 
-        var fromDirId = resourceRepository.findDirectoryId(storeId, dir);
+        var fromDirId = findDirectoryId(scope, dir);
         if (fromDirId.isEmpty()) return dirNotFound(store, dir);
 
         String targetDirName = body.get("targetDir");
         if (targetDirName == null || targetDirName.isBlank())
             return ResponseEntity.badRequest().body(new ErrorResponse("targetDir is required"));
 
-        var toDirId = resourceRepository.findDirectoryId(storeId, targetDirName);
+        var toDirId = findDirectoryId(scope, targetDirName);
         if (toDirId.isEmpty()) return dirNotFound(store, targetDirName);
 
         if (fromDirId.get().equals(toDirId.get()))
@@ -172,11 +183,11 @@ public class ResourceAdminController {
             @PathVariable String dir,
             @PathVariable String name,
             @RequestBody Map<String, String> body) {
-        var storeId = resolveStore(store);
-        if (storeId == null) return storeNotFound(store);
-        sessionService.requirePermission(auth, Permission.EDIT_RESOURCES, storeId);
+        var scope = resolveScope(store);
+        if (scope == null) return storeNotFound(store);
+        requireScopePermission(auth, scope);
 
-        var dirId = resourceRepository.findDirectoryId(storeId, dir);
+        var dirId = findDirectoryId(scope, dir);
         if (dirId.isEmpty()) return dirNotFound(store, dir);
 
         String newName = body.get("newName");
@@ -194,11 +205,11 @@ public class ResourceAdminController {
             @PathVariable String store,
             @PathVariable String dir,
             @PathVariable String name) {
-        var storeId = resolveStore(store);
-        if (storeId == null) return storeNotFound(store);
-        sessionService.requirePermission(auth, Permission.EDIT_RESOURCES, storeId);
+        var scope = resolveScope(store);
+        if (scope == null) return storeNotFound(store);
+        requireScopePermission(auth, scope);
 
-        var dirId = resourceRepository.findDirectoryId(storeId, dir);
+        var dirId = findDirectoryId(scope, dir);
         if (dirId.isEmpty()) return dirNotFound(store, dir);
 
         boolean deleted = resourceRepository.deleteAsset(dirId.get(), name);
@@ -206,11 +217,43 @@ public class ResourceAdminController {
         return ResponseEntity.ok().build();
     }
 
-    // ── Helpers ──────────────────────────────────────────────────────────────
+    // ── Scope resolution ─────────────────────────────────────────────────────
 
-    private Long resolveStore(String storeName) {
-        return resourceRepository.findStoreIdByName(storeName).orElse(null);
+    // storeId == null means org-level (global) scope.
+    private record ResourceScope(long orgId, Long storeId) {
+        boolean isGlobal() { return storeId == null; }
     }
+
+    // {store} is resolved as a real branch's store name first (existing, org-scoped
+    // via the store's own FK), then as an organization's slug (global scope). The two
+    // namespaces aren't currently validated as disjoint at store-creation time — see
+    // the doc note this PR leaves as a follow-up.
+    private ResourceScope resolveScope(String segment) {
+        var storeId = resourceRepository.findStoreIdByName(segment);
+        if (storeId.isPresent()) {
+            var orgId = resourceRepository.findOrgIdByStoreId(storeId.get());
+            if (orgId.isEmpty()) return null;
+            return new ResourceScope(orgId.get(), storeId.get());
+        }
+        var orgId = resourceRepository.findOrgIdBySlug(segment);
+        return orgId.map(id -> new ResourceScope(id, null)).orElse(null);
+    }
+
+    private void requireScopePermission(String auth, ResourceScope scope) {
+        if (scope.isGlobal()) {
+            sessionService.requirePermissionForOrg(auth, Permission.EDIT_RESOURCES, scope.orgId());
+        } else {
+            sessionService.requirePermission(auth, Permission.EDIT_RESOURCES, scope.storeId());
+        }
+    }
+
+    private Optional<Long> findDirectoryId(ResourceScope scope, String dir) {
+        return scope.isGlobal()
+            ? resourceRepository.findDirectoryIdGlobal(scope.orgId(), dir)
+            : resourceRepository.findDirectoryId(scope.storeId(), dir);
+    }
+
+    // ── Helpers ──────────────────────────────────────────────────────────────
 
     private long resolveMaxBytes() {
         // Falls back to 2 MB if the system property is missing or unparseable.
