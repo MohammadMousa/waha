@@ -72,10 +72,14 @@ public class ProductRepository {
     private static final String PRODUCT_COLS =
         "id, barcode, name, description, price, active, company_id, `public`, category_id, image_resource_id";
 
+    private static final String PREFIXED_PRODUCT_COLS =
+        "products.id, products.barcode, products.name, products.description, products.price, products.active, products.company_id, products.`public`, products.category_id, products.image_resource_id";
+
     public Optional<Product> resolveByBarcode(String barcode, long companyId) {
         List<Product> results = jdbc.query(
-            "SELECT " + PRODUCT_COLS + " FROM products " +
-            "WHERE barcode = :barcode AND company_id = :companyId LIMIT 1",
+            "SELECT " + PREFIXED_PRODUCT_COLS + " FROM products " +
+            "JOIN product_barcodes pb ON pb.product_id = products.id " +
+            "WHERE pb.barcode = :barcode AND products.company_id = :companyId LIMIT 1",
             Map.of("barcode", barcode, "companyId", companyId),
             (rs, i) -> mapProduct(rs)
         );
@@ -184,7 +188,12 @@ public class ProductRepository {
             if (imageResourceId != null) ps.setLong(7, imageResourceId); else ps.setNull(7, java.sql.Types.BIGINT);
             return ps;
         }, keyHolder);
-        return keyHolder.getKey().longValue();
+        long productId = keyHolder.getKey().longValue();
+        jdbc.getJdbcTemplate().update(
+            "INSERT INTO product_barcodes (product_id, barcode, is_primary) VALUES (?, ?, 1)",
+            productId, barcode
+        );
+        return productId;
     }
 
     public List<Product> findByIds(List<Long> ids) {
@@ -249,6 +258,32 @@ public class ProductRepository {
         );
         boolean hasMore = results.size() > size;
         return new ProductPage(hasMore ? results.subList(0, size) : results, hasMore);
+    }
+
+    public record BarcodeEntry(long id, String barcode, boolean isPrimary) {}
+
+    public List<BarcodeEntry> findBarcodesByProduct(long productId) {
+        return jdbc.query(
+            "SELECT id, barcode, is_primary FROM product_barcodes WHERE product_id = :productId ORDER BY is_primary DESC, id ASC",
+            Map.of("productId", productId),
+            (rs, i) -> new BarcodeEntry(rs.getLong("id"), rs.getString("barcode"), rs.getBoolean("is_primary"))
+        );
+    }
+
+    public void addAlternateBarcode(long productId, String barcode) {
+        jdbc.getJdbcTemplate().update(
+            "INSERT INTO product_barcodes (product_id, barcode, is_primary) VALUES (?, ?, 0)",
+            productId, barcode
+        );
+    }
+
+    // Returns false if the barcode was not found or is primary (primary cannot be removed).
+    public boolean removeBarcode(long productId, String barcode) {
+        int rows = jdbc.getJdbcTemplate().update(
+            "DELETE FROM product_barcodes WHERE product_id = ? AND barcode = ? AND is_primary = 0",
+            productId, barcode
+        );
+        return rows > 0;
     }
 
     public List<Map<String, Object>> adminLookup(long companyId, String search, Long categoryId, Boolean active) {

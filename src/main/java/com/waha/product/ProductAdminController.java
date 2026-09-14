@@ -65,7 +65,62 @@ public class ProductAdminController {
         long permStoreId = product.companyId();
         sessionService.requirePermissionForOrg(auth, Permission.EDIT_PRODUCTS, permStoreId);
 
-        productRepository.patch(id, body);
+        try {
+            productRepository.patch(id, body);
+        } catch (org.springframework.dao.DataIntegrityViolationException e) {
+            return ResponseEntity.status(400).body(new ErrorResponse("Invalid field value: resource not found"));
+        }
+        return ResponseEntity.ok().build();
+    }
+
+    // ── Barcodes ─────────────────────────────────────────────────────────────
+
+    @GetMapping("/{id}/barcodes")
+    public ResponseEntity<?> listBarcodes(
+            @RequestHeader(value = "Authorization", required = false) String auth,
+            @PathVariable long id) {
+        Optional<Product> opt = productRepository.findById(id);
+        if (opt.isEmpty()) return ResponseEntity.status(404).body(new ErrorResponse("Product not found: " + id));
+        sessionService.requirePermissionForOrg(auth, Permission.EDIT_PRODUCTS, opt.get().companyId());
+        return ResponseEntity.ok(productRepository.findBarcodesByProduct(id));
+    }
+
+    @PostMapping("/{id}/barcodes")
+    public ResponseEntity<?> addBarcode(
+            @RequestHeader(value = "Authorization", required = false) String auth,
+            @PathVariable long id,
+            @RequestBody Map<String, Object> body) {
+        Optional<Product> opt = productRepository.findById(id);
+        if (opt.isEmpty()) return ResponseEntity.status(404).body(new ErrorResponse("Product not found: " + id));
+        sessionService.requirePermissionForOrg(auth, Permission.EDIT_PRODUCTS, opt.get().companyId());
+
+        Object raw = body.get("barcode");
+        if (raw == null || raw.toString().isBlank()) {
+            return ResponseEntity.badRequest().body(new ErrorResponse("barcode is required"));
+        }
+        String barcode = raw.toString().trim();
+        try {
+            productRepository.addAlternateBarcode(id, barcode);
+        } catch (org.springframework.dao.DuplicateKeyException e) {
+            return ResponseEntity.status(409).body(new ErrorResponse("Barcode already in use: " + barcode));
+        }
+        return ResponseEntity.ok().build();
+    }
+
+    @DeleteMapping("/{id}/barcodes/{barcode}")
+    public ResponseEntity<?> removeBarcode(
+            @RequestHeader(value = "Authorization", required = false) String auth,
+            @PathVariable long id,
+            @PathVariable String barcode) {
+        Optional<Product> opt = productRepository.findById(id);
+        if (opt.isEmpty()) return ResponseEntity.status(404).body(new ErrorResponse("Product not found: " + id));
+        sessionService.requirePermissionForOrg(auth, Permission.EDIT_PRODUCTS, opt.get().companyId());
+
+        boolean removed = productRepository.removeBarcode(id, barcode);
+        if (!removed) {
+            return ResponseEntity.status(400).body(new ErrorResponse(
+                "Barcode not found or is the primary barcode and cannot be removed"));
+        }
         return ResponseEntity.ok().build();
     }
 
