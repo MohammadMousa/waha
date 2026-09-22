@@ -1,0 +1,17 @@
+services:
+  admin-web:
+    image: nginx:alpine
+    container_name: waha_admin_web
+    restart: always
+    ports:
+      - "80:80"
+    volumes:
+      - ./admin_build/web:/usr/share/nginx/html:ro
+      - ./nginx-admin.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - waha
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
