@@ -1,12 +1,15 @@
 package com.waha.employee;
 
 import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.waha.auth.Permission;
+import com.waha.auth.PinLockoutService;
 import com.waha.auth.SessionService;
 import com.waha.auth.UserSession;
 import com.waha.common.ErrorResponse;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
@@ -19,10 +22,15 @@ public class EmployeeAdminController {
 
     private final EmployeeRepository employeeRepository;
     private final SessionService sessionService;
+    private final BCryptPasswordEncoder encoder;
+    private final PinLockoutService lockoutService;
 
-    public EmployeeAdminController(EmployeeRepository employeeRepository, SessionService sessionService) {
+    public EmployeeAdminController(EmployeeRepository employeeRepository, SessionService sessionService,
+                                   BCryptPasswordEncoder encoder, PinLockoutService lockoutService) {
         this.employeeRepository = employeeRepository;
-        this.sessionService = sessionService;
+        this.sessionService     = sessionService;
+        this.encoder            = encoder;
+        this.lockoutService     = lockoutService;
     }
 
     @GetMapping
@@ -47,8 +55,10 @@ public class EmployeeAdminController {
         String pinCode  = text(body, "pinCode");
         if (username == null || username.isBlank())
             return ResponseEntity.badRequest().body(new ErrorResponse("username is required"));
-        if (pinCode == null || pinCode.isBlank() || pinCode.length() != 4)
-            return ResponseEntity.badRequest().body(new ErrorResponse("pinCode must be 4 digits"));
+        if (pinCode == null || pinCode.isBlank() || pinCode.length() != 6)
+            return ResponseEntity.badRequest().body(new ErrorResponse("pinCode must be 6 digits"));
+        if (isWeakPin(pinCode))
+            return ResponseEntity.badRequest().body(new ErrorResponse("PIN is too easy to guess, choose a less predictable one"));
 
         long orgId = session.organizationId();
         if (employeeRepository.existsByUsername(username, orgId))
@@ -59,7 +69,7 @@ public class EmployeeAdminController {
             employeeId = employeeRepository.create(
                 orgId,
                 username,
-                pinCode,
+                encoder.encode(pinCode),
                 text(body, "firstName"),
                 text(body, "lastName"),
                 text(body, "gender"),
@@ -114,13 +124,22 @@ public class EmployeeAdminController {
         if (!employeeRepository.existsById(id))
             return ResponseEntity.status(404).body(new ErrorResponse("Employee not found: " + id));
 
+        JsonNode patchBody = body;
         if (body.has("pinCode")) {
             String pin = body.get("pinCode").asText("").trim();
-            if (pin.length() != 4)
-                return ResponseEntity.badRequest().body(new ErrorResponse("pinCode must be 4 digits"));
+            if (pin.length() != 6)
+                return ResponseEntity.badRequest().body(new ErrorResponse("pinCode must be 6 digits"));
+            if (isWeakPin(pin))
+                return ResponseEntity.badRequest().body(new ErrorResponse("PIN is too easy to guess, choose a less predictable one"));
+            ObjectNode copy = body.deepCopy();
+            copy.put("pinCode", encoder.encode(pin));
+            patchBody = copy;
+            lockoutService.clearEmployeeLockout(id);
         }
+        if (body.has("enabled") && body.get("enabled").asBoolean())
+            lockoutService.clearEmployeeLockout(id);
 
-        employeeRepository.patch(id, body);
+        employeeRepository.patch(id, patchBody);
 
         if (body.has("role") || body.has("storeId")) {
             employeeRepository.clearRoles(id);
@@ -216,7 +235,22 @@ public class EmployeeAdminController {
         m.put("roleName",          e.roleName());
         m.put("storeId",           e.storeId());
         m.put("storeName",         e.storeName());
+        m.put("lockedUntil",       e.lockedUntil() != null ? e.lockedUntil().toString() : null);
         return m;
+    }
+
+    private static boolean isWeakPin(String pin) {
+        if (pin.chars().distinct().count() == 1) return true; // 000000, 111111, …
+        boolean asc = true, desc = true;
+        for (int i = 1; i < pin.length(); i++) {
+            if (pin.charAt(i) - pin.charAt(i - 1) != 1) asc = false;
+            if (pin.charAt(i - 1) - pin.charAt(i) != 1) desc = false;
+        }
+        if (asc || desc) return true; // 123456, 987654, …
+        // repeating pairs: 112233, 445566, …
+        if (pin.charAt(0) == pin.charAt(1) && pin.charAt(2) == pin.charAt(3) && pin.charAt(4) == pin.charAt(5)) return true;
+        return java.util.Set.of("123123", "121212", "111222", "222333", "333444",
+            "444555", "555666", "666777", "777888", "888999", "123321", "654321").contains(pin);
     }
 
     private static String text(JsonNode body, String field) {

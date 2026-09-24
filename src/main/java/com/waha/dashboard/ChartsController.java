@@ -2,6 +2,7 @@ package com.waha.dashboard;
 
 import com.waha.auth.Permission;
 import com.waha.auth.SessionService;
+import com.waha.common.ErrorResponse;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -9,6 +10,7 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 import java.time.format.DateTimeFormatter;
+import java.time.format.DateTimeParseException;
 import java.util.List;
 import java.util.Map;
 
@@ -35,12 +37,13 @@ public class ChartsController {
 
         sessionService.requirePermission(auth, Permission.VIEW_ALL_ORDERS, 1L);
 
-        LocalDateTime start = from != null
-                ? LocalDate.parse(from, DATE_FMT).atStartOfDay()
-                : LocalDateTime.now().minusDays(30);
-        LocalDateTime end = to != null
-                ? LocalDate.parse(to, DATE_FMT).atTime(23, 59, 59)
-                : LocalDateTime.now();
+        LocalDateTime start, end;
+        try {
+            start = from != null ? LocalDate.parse(from, DATE_FMT).atStartOfDay() : LocalDateTime.now().minusDays(30);
+            end   = to   != null ? LocalDate.parse(to,   DATE_FMT).atTime(23, 59, 59) : LocalDateTime.now();
+        } catch (DateTimeParseException e) {
+            return ResponseEntity.badRequest().body(new ErrorResponse("Invalid date format — use yyyy-MM-dd"));
+        }
 
         List<Map<String, Object>> data = switch (type) {
             case "revenue-by-hours"      -> chartsRepository.revenueByHours(start, end);

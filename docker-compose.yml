@@ -6,6 +6,7 @@ services:
     environment:
       MYSQL_ROOT_PASSWORD: root
       MYSQL_DATABASE: waha
+    command: --innodb-buffer-pool-size=1G
     volumes:
       - mysql_data:/var/lib/mysql
     ports:

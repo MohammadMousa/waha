@@ -3,10 +3,13 @@ package com.waha.reports;
 import com.waha.auth.Permission;
 import com.waha.auth.SessionService;
 import com.waha.auth.UserSession;
+import com.waha.common.ErrorResponse;
 import com.waha.product.ProductRepository;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.LocalDate;
+import java.time.format.DateTimeParseException;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -84,6 +87,13 @@ public class ReportsController {
         sessionService.requirePermission(auth, Permission.VIEW_ALL_ORDERS, 1L);
         if (size < 1 || size > 100) size = 10;
 
+        try {
+            if (from != null) LocalDate.parse(from);
+            if (to   != null) LocalDate.parse(to);
+        } catch (DateTimeParseException e) {
+            return ResponseEntity.badRequest().body(new ErrorResponse("Invalid date format — use yyyy-MM-dd"));
+        }
+
         ReportsRepository.OrderFilters f = new ReportsRepository.OrderFilters(
             storeId, status, from, to, kiosk, paymentType, synced);
 
@@ -112,6 +122,16 @@ public class ReportsController {
         sessionService.requirePermission(auth, Permission.VIEW_ALL_ORDERS, 1L);
 
         if (size < 1 || size > 100) size = 10;
+
+        if (from == null) from = LocalDate.now().minusDays(30).toString();
+        if (to   == null) to   = LocalDate.now().toString();
+
+        try {
+            LocalDate.parse(from);
+            LocalDate.parse(to);
+        } catch (DateTimeParseException e) {
+            return ResponseEntity.badRequest().body(new ErrorResponse("Invalid date format — use yyyy-MM-dd"));
+        }
 
         ReportsRepository.Filters f = new ReportsRepository.Filters(storeId, categoryId, productId, from, to);
 

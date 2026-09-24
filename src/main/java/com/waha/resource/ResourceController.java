@@ -1,5 +1,6 @@
 package com.waha.resource;
 
+import com.waha.auth.SessionService;
 import com.waha.common.ErrorResponse;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
@@ -27,16 +28,21 @@ public class ResourceController {
     private static final long MAX_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB
 
     private final ResourceRepository resourceRepository;
+    private final SessionService sessionService;
 
-    public ResourceController(ResourceRepository resourceRepository) {
+    public ResourceController(ResourceRepository resourceRepository, SessionService sessionService) {
         this.resourceRepository = resourceRepository;
+        this.sessionService = sessionService;
     }
 
     // Upload a file. Returns {id, sha256} regardless of whether this was a
     // fresh store or a deduplication hit (same bytes already existed).
     // The caller uses id to reference the resource from other tables.
     @PostMapping(consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
-    public ResponseEntity<?> upload(@RequestParam("file") MultipartFile file) {
+    public ResponseEntity<?> upload(
+            @RequestHeader(value = "Authorization", required = false) String auth,
+            @RequestParam("file") MultipartFile file) {
+        sessionService.requireSession(auth);
         if (file.isEmpty()) {
             return ResponseEntity.status(400).body(new ErrorResponse("file is required"));
         }

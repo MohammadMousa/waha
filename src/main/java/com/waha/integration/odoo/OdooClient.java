@@ -24,10 +24,11 @@ public class OdooClient {
     }
 
     // Derives the Odoo DB name from the base URL subdomain.
-    // https://wa7a.odoo.com → "wa7a", https://myco.odoo.com → "myco"
+    // https://wa7a.odoo.com → "wa7a", hrco28.odoo.com → "hrco28"
     private String dbFromUrl(String baseUrl) {
         try {
-            String host = java.net.URI.create(baseUrl).getHost();
+            String normalized = baseUrl.contains("://") ? baseUrl : "https://" + baseUrl;
+            String host = java.net.URI.create(normalized).getHost();
             return host.split("\\.")[0];
         } catch (Exception e) {
             throw new OdooException("Cannot derive DB name from URL: " + baseUrl);

@@ -24,12 +24,14 @@ public enum Permission {
 
     VIEW_INVENTORY,     // read stock levels, low-stock alerts, inventory history
     PROCESS_INVENTORY,  // perform cycle counts, transfers, returns, visits
-    MANAGE_INVENTORY;   // configure settings, approve large transfers, full reports
+    MANAGE_INVENTORY,   // configure settings, approve large transfers, full reports
+
+    UPLOAD_LOGS;        // upload device diagnostic logs — granted to KIOSK by default
 
     // The single authoritative mapping: role → what it can do.
     // Change a role's capabilities here — all endpoints pick it up immediately.
     public static final Map<Role, Set<Permission>> BY_ROLE = Map.of(
-        Role.KIOSK,              Set.of(VIEW_PRODUCTS, VIEW_OWN_ORDERS, PROCESS_ORDERS),
+        Role.KIOSK,              Set.of(VIEW_PRODUCTS, VIEW_OWN_ORDERS, PROCESS_ORDERS, UPLOAD_LOGS),
         Role.CASHIER,            Set.of(VIEW_PRODUCTS, VIEW_OWN_ORDERS, VIEW_ORDER_HISTORY,
                                         VIEW_ALL_ORDERS, PROCESS_ORDERS,
                                         VIEW_INVENTORY),

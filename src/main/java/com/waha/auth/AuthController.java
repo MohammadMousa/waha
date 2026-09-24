@@ -12,6 +12,7 @@ import java.security.SecureRandom;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.Optional;
 
 @RestController
 @RequestMapping("/api/auth")
@@ -23,15 +24,17 @@ public class AuthController {
     private final SessionService sessionService;
     private final StoreRepository storeRepository;
     private final RoleRepository roleRepository;
-    private final BCryptPasswordEncoder passwordEncoder = new BCryptPasswordEncoder();
+    private final BCryptPasswordEncoder passwordEncoder;
     private final SecureRandom secureRandom = new SecureRandom();
 
     public AuthController(UserRepository userRepository, SessionService sessionService,
-                          StoreRepository storeRepository, RoleRepository roleRepository) {
-        this.userRepository = userRepository;
-        this.sessionService = sessionService;
+                          StoreRepository storeRepository, RoleRepository roleRepository,
+                          BCryptPasswordEncoder passwordEncoder) {
+        this.userRepository  = userRepository;
+        this.sessionService  = sessionService;
         this.storeRepository = storeRepository;
-        this.roleRepository = roleRepository;
+        this.roleRepository  = roleRepository;
+        this.passwordEncoder = passwordEncoder;
     }
 
     private Long defaultStoreId(long orgId) {
@@ -142,6 +145,30 @@ public class AuthController {
         long loginUserId = record.get().id();
         Set<String> permissions = sessionService.resolvePermissions(loginUserId, defStore);
         return ResponseEntity.ok(new AuthResponse(token, loginUserId, record.get().username(), defStore, defStore, mode, systemProperties(loginOrgId), primaryRoleName(loginUserId, defStore), permissions));
+    }
+
+    @PatchMapping("/me/password")
+    public ResponseEntity<?> changePassword(
+            @RequestHeader(value = "Authorization", required = false) String authHeader,
+            @RequestBody Map<String, String> body) {
+        try {
+            UserSession session = sessionService.requireSession(authHeader);
+            String currentPassword = body.getOrDefault("currentPassword", "").trim();
+            String newPassword     = body.getOrDefault("newPassword",     "").trim();
+            if (currentPassword.isBlank() || newPassword.isBlank())
+                return ResponseEntity.badRequest().body(new ErrorResponse("currentPassword and newPassword are required"));
+            if (newPassword.length() < 8)
+                return ResponseEntity.badRequest().body(new ErrorResponse("newPassword must be at least 8 characters"));
+
+            Optional<String> currentHash = userRepository.findPasswordHashById(session.userId());
+            if (currentHash.isEmpty() || !passwordEncoder.matches(currentPassword, currentHash.get()))
+                return ResponseEntity.status(401).body(new ErrorResponse("Current password is incorrect"));
+
+            userRepository.updatePassword(session.userId(), passwordEncoder.encode(newPassword));
+            return ResponseEntity.ok().build();
+        } catch (UnauthorizedException e) {
+            return ResponseEntity.status(401).body(new ErrorResponse(e.getMessage()));
+        }
     }
 
     @PostMapping("/logout")

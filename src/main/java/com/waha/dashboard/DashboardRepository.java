@@ -22,8 +22,10 @@ public class DashboardRepository {
     // ── KPIs ─────────────────────────────────────────────────────────────────
 
     public Map<String, Object> getKpis(long orgId, Long storeId) {
-        String storeFilter = storeFilter(storeId);
-        MapSqlParameterSource p = baseParams(orgId, storeId);
+        List<Long> storeIds = storeId != null ? List.of(storeId) : getOrgStoreIds(orgId);
+        if (storeIds.isEmpty()) return emptyKpis();
+
+        MapSqlParameterSource p = new MapSqlParameterSource("storeIds", storeIds);
 
         Map<String, Object> row = namedJdbc.queryForMap("""
             SELECT
@@ -35,15 +37,16 @@ public class DashboardRepository {
               COUNT(*)                                                                                                       AS total_orders,
               COUNT(DISTINCT o.store_id)                                                                                     AS active_stores
             FROM orders o
-            JOIN stores s ON s.id = o.store_id
             WHERE o.status = 'PAID'
-              AND s.organization_id = :orgId
-            """ + storeFilter, p);
+              AND o.store_id IN (:storeIds)
+            """, p);
 
+        MapSqlParameterSource kp = new MapSqlParameterSource("orgId", orgId);
+        if (storeId != null) kp.addValue("storeId", storeId);
         long kioskCount = namedJdbc.queryForObject(
             "SELECT COUNT(*) FROM devices WHERE enabled = 1 AND organization_id = :orgId" +
             (storeId != null ? " AND store_id = :storeId" : ""),
-            p, Long.class
+            kp, Long.class
         );
 
         BigDecimal totalRevenue = toBD(row.get("total_revenue"));
@@ -77,18 +80,19 @@ public class DashboardRepository {
             case "3m"  -> 90;
             default    -> 30;
         };
-        String valueExpr  = "revenue".equals(metric) ? "COALESCE(SUM(o.total_amount), 0)" : "COUNT(*)";
-        String storeFilter = storeFilter(storeId);
-        MapSqlParameterSource p = baseParams(orgId, storeId).addValue("days", days);
+        String valueExpr = "revenue".equals(metric) ? "COALESCE(SUM(o.total_amount), 0)" : "COUNT(*)";
+        List<Long> storeIds = storeId != null ? List.of(storeId) : getOrgStoreIds(orgId);
+        if (storeIds.isEmpty()) return List.of();
+
+        MapSqlParameterSource p = new MapSqlParameterSource("storeIds", storeIds).addValue("days", days);
 
         List<Map<String, Object>> rows = namedJdbc.queryForList("""
             SELECT DATE(o.created_at) AS day, %s AS value
             FROM orders o
-            JOIN stores s ON s.id = o.store_id
             WHERE o.status = 'PAID'
-              AND s.organization_id = :orgId
+              AND o.store_id IN (:storeIds)
               AND o.created_at >= DATE_SUB(CURDATE(), INTERVAL :days DAY)
-            """.formatted(valueExpr) + storeFilter + " GROUP BY DATE(o.created_at) ORDER BY day ASC", p);
+            """.formatted(valueExpr) + " GROUP BY DATE(o.created_at) ORDER BY day ASC", p);
 
         Map<String, Object> byDay = new LinkedHashMap<>();
         for (Map<String, Object> r : rows) byDay.put(r.get("day").toString(), r.get("value"));
@@ -115,17 +119,19 @@ public class DashboardRepository {
             case "2y" -> 24;
             default   -> 6;
         };
-        String storeFilter = storeFilter(storeId);
-        MapSqlParameterSource p = baseParams(orgId, storeId).addValue("months", months);
+        List<Long> storeIds = storeId != null ? List.of(storeId) : getOrgStoreIds(orgId);
+        if (storeIds.isEmpty()) return List.of();
+
+        MapSqlParameterSource p = new MapSqlParameterSource("storeIds", storeIds).addValue("months", months);
 
         List<Map<String, Object>> rows = namedJdbc.queryForList(
             "SELECT DATE_FORMAT(o.created_at, '%Y-%m') AS month_key," +
             " MIN(DATE_FORMAT(o.created_at, '%b %Y')) AS label," +
             " COALESCE(SUM(o.total_amount), 0) AS value" +
-            " FROM orders o JOIN stores s ON s.id = o.store_id" +
-            " WHERE o.status = 'PAID' AND s.organization_id = :orgId" +
+            " FROM orders o" +
+            " WHERE o.status = 'PAID'" +
+            " AND o.store_id IN (:storeIds)" +
             " AND o.created_at >= DATE_SUB(CURDATE(), INTERVAL :months MONTH)" +
-            storeFilter +
             " GROUP BY DATE_FORMAT(o.created_at, '%Y-%m') ORDER BY month_key ASC", p);
 
         Map<String, Object> byMonth    = new LinkedHashMap<>();
@@ -154,30 +160,42 @@ public class DashboardRepository {
     // ── Recent orders ─────────────────────────────────────────────────────────
 
     public List<Map<String, Object>> getRecentOrders(long orgId, Long storeId) {
-        String storeFilter = storeFilter(storeId);
-        MapSqlParameterSource p = baseParams(orgId, storeId);
+        List<Long> storeIds = storeId != null ? List.of(storeId) : getOrgStoreIds(orgId);
+        if (storeIds.isEmpty()) return List.of();
+
+        MapSqlParameterSource p = new MapSqlParameterSource("storeIds", storeIds);
         return namedJdbc.queryForList(
             "SELECT o.id, o.display_id, o.total_amount AS total, o.status, o.currency, o.created_at," +
             " s.name AS store_name, s.display_name AS store_display_name" +
             " FROM orders o" +
             " JOIN stores s ON s.id = o.store_id" +
             " WHERE o.status = 'PAID'" +
-            " AND s.organization_id = :orgId" +
-            storeFilter +
+            " AND o.store_id IN (:storeIds)" +
             " ORDER BY o.created_at DESC LIMIT 20",
             p);
     }
 
     // ── helpers ───────────────────────────────────────────────────────────────
 
-    private static String storeFilter(Long storeId) {
-        return storeId != null ? " AND o.store_id = :storeId" : "";
+    private List<Long> getOrgStoreIds(long orgId) {
+        return namedJdbc.queryForList(
+            "SELECT id FROM stores WHERE organization_id = :orgId",
+            Map.of("orgId", orgId), Long.class);
     }
 
-    private static MapSqlParameterSource baseParams(long orgId, Long storeId) {
-        MapSqlParameterSource p = new MapSqlParameterSource("orgId", orgId);
-        if (storeId != null) p.addValue("storeId", storeId);
-        return p;
+    private static Map<String, Object> emptyKpis() {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("todayRevenue",       BigDecimal.ZERO);
+        m.put("todayRevenuePct",    null);
+        m.put("totalRevenue",       BigDecimal.ZERO);
+        m.put("todayOrders",        0L);
+        m.put("todayOrdersPct",     null);
+        m.put("totalOrders",        0L);
+        m.put("totalKiosks",        0L);
+        m.put("activeStores",       0L);
+        m.put("avgRevenuePerKiosk", BigDecimal.ZERO);
+        m.put("avgOrdersPerKiosk",  0.0);
+        return m;
     }
 
     private static BigDecimal toBD(Object v) {

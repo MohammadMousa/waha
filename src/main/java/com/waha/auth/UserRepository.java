@@ -126,6 +126,12 @@ public class UserRepository {
             Map.of("h", passwordHash, "id", id));
     }
 
+    public Optional<String> findPasswordHashById(long id) {
+        List<String> results = namedJdbc.queryForList(
+            "SELECT password_hash FROM users WHERE id = :id", Map.of("id", id), String.class);
+        return results.stream().findFirst();
+    }
+
     public boolean existsById(long id) {
         Integer count = namedJdbc.queryForObject(
             "SELECT COUNT(*) FROM users WHERE id = :id", Map.of("id", id), Integer.class);

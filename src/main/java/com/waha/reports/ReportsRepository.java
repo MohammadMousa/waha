@@ -50,7 +50,8 @@ public class ReportsRepository {
               COALESCE(SUM(oi.quantity), 0)       AS total_qty_sold,
               COALESCE(SUM(oi.quantity * oi.unit_price), 0) AS total_sales
             FROM order_items oi
-            JOIN orders o ON oi.order_id = o.id
+            JOIN orders   o ON oi.order_id   = o.id
+            JOIN products p ON oi.product_id = p.id
             WHERE o.status = 'PAID'
             """ + where;
 
@@ -63,7 +64,8 @@ public class ReportsRepository {
             SELECT COUNT(*) FROM (
               SELECT oi.product_id, o.store_id, oi.unit_price
               FROM order_items oi
-              JOIN orders o ON oi.order_id = o.id
+              JOIN orders   o ON oi.order_id   = o.id
+              JOIN products p ON oi.product_id = p.id
               WHERE o.status = 'PAID'
             """ + where + """
 
@@ -103,7 +105,7 @@ public class ReportsRepository {
             """ + where + """
 
             GROUP BY p.id, s.id, oi.unit_price
-            ORDER BY total DESC
+            ORDER BY total DESC, p.id, s.id, oi.unit_price
             LIMIT :limit OFFSET :offset
             """;
 
@@ -164,7 +166,7 @@ public class ReportsRepository {
             WHERE 1=1
             """ + buildOrderWhere(f) + """
 
-            ORDER BY o.created_at DESC
+            ORDER BY o.created_at DESC, o.id DESC
             LIMIT :limit OFFSET :offset
             """;
         return namedJdbc.queryForList(sql, params);
@@ -218,7 +220,7 @@ public class ReportsRepository {
             p.addValue("storeId",     storeId);
             p.addValue("status",      status);
             p.addValue("from",        from);
-            p.addValue("to",          to != null ? to + " 23:59:59" : null);
+            p.addValue("to",          to != null ? java.time.LocalDate.parse(to).plusDays(1).toString() : null);
             p.addValue("kiosk",       kiosk);
             p.addValue("paymentType", paymentType);
             return p;
@@ -246,8 +248,7 @@ public class ReportsRepository {
             p.addValue("categoryId", categoryId);
             p.addValue("productId",  productId);
             p.addValue("from",       from);
-            // shift "to" to start of next day so the full end-date is included
-            p.addValue("to", to != null ? to + " 23:59:59" : null);
+            p.addValue("to", to != null ? java.time.LocalDate.parse(to).plusDays(1).toString() : null);
             return p;
         }
     }

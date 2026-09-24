@@ -30,7 +30,7 @@ public class IntegrationsController {
             @RequestParam(defaultValue = "0")  int page,
             @RequestParam(defaultValue = "20") int size) {
 
-        sessionService.requirePermission(auth, Permission.MANAGE_SYSTEM, 1L);
+        sessionService.requirePermission(auth, Permission.MANAGE_STORES, 1L);
         if (size < 1 || size > 200) size = 20;
 
         long total = integrationsAdminRepository.countLogs(entityType, status);

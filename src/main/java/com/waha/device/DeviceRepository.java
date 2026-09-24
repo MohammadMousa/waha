@@ -7,6 +7,7 @@ import org.springframework.jdbc.core.simple.SimpleJdbcInsert;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
+import java.time.Instant;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -27,7 +28,8 @@ public class DeviceRepository {
         long id, String username, String name,
         String deviceKey, String deviceType,
         long organizationId, long storeId, String storeName,
-        boolean enabled, LocalDateTime createdAt
+        boolean enabled, LocalDateTime createdAt,
+        Instant lockedUntil
     ) {}
 
     private final JdbcTemplate jdbcTemplate;
@@ -83,25 +85,29 @@ public class DeviceRepository {
         return namedJdbc.query("""
             SELECT d.id, d.username, d.name, d.device_key, d.device_type,
                    d.organization_id, d.store_id, s.name AS store_name,
-                   d.enabled, d.created_at
+                   d.enabled, d.created_at, d.locked_until
             FROM devices d
             JOIN stores s ON s.id = d.store_id
             WHERE d.organization_id = :orgId
             ORDER BY d.id DESC
             """,
             Map.of("orgId", orgId),
-            (rs, i) -> new DeviceAdminView(
-                rs.getLong("id"),
-                rs.getString("username"),
-                rs.getString("name"),
-                rs.getString("device_key"),
-                rs.getString("device_type"),
-                rs.getLong("organization_id"),
-                rs.getLong("store_id"),
-                rs.getString("store_name"),
-                rs.getBoolean("enabled"),
-                rs.getObject("created_at", LocalDateTime.class)
-            )
+            (rs, i) -> {
+                java.sql.Timestamp lockedTs = rs.getTimestamp("locked_until");
+                return new DeviceAdminView(
+                    rs.getLong("id"),
+                    rs.getString("username"),
+                    rs.getString("name"),
+                    rs.getString("device_key"),
+                    rs.getString("device_type"),
+                    rs.getLong("organization_id"),
+                    rs.getLong("store_id"),
+                    rs.getString("store_name"),
+                    rs.getBoolean("enabled"),
+                    rs.getObject("created_at", LocalDateTime.class),
+                    lockedTs != null ? lockedTs.toInstant() : null
+                );
+            }
         );
     }
 

@@ -7,6 +7,7 @@ import org.springframework.jdbc.core.simple.SimpleJdbcInsert;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
+import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -29,7 +30,8 @@ public class EmployeeRepository {
         LocalDate hiredAt, String address, String notes,
         Long avatarResourceId, boolean enabled,
         LocalDateTime createdAt,
-        String roleName, Long storeId, String storeName
+        String roleName, Long storeId, String storeName,
+        Instant lockedUntil
     ) {}
 
     private final JdbcTemplate jdbcTemplate;
@@ -91,7 +93,7 @@ public class EmployeeRepository {
         return namedJdbc.query("""
             SELECT e.id, e.username, e.first_name, e.last_name, e.gender, e.birth_date,
                    e.email, e.phone, e.hired_at, e.address, e.notes,
-                   e.avatar_resource_id, e.enabled, e.created_at,
+                   e.avatar_resource_id, e.enabled, e.created_at, e.locked_until,
                    (SELECT r.name FROM employee_roles er JOIN roles r ON r.id = er.role_id
                     WHERE er.employee_id = e.id ORDER BY er.scope_id DESC LIMIT 1) AS role_name,
                    (SELECT er.scope_id FROM employee_roles er
@@ -105,25 +107,29 @@ public class EmployeeRepository {
             ORDER BY e.id DESC
             """,
             Map.of("orgId", orgId),
-            (rs, i) -> new EmployeeAdminView(
-                rs.getLong("id"),
-                rs.getString("username"),
-                rs.getString("first_name"),
-                rs.getString("last_name"),
-                rs.getString("gender"),
-                rs.getObject("birth_date", LocalDate.class),
-                rs.getString("email"),
-                rs.getString("phone"),
-                rs.getObject("hired_at", LocalDate.class),
-                rs.getString("address"),
-                rs.getString("notes"),
-                rs.getObject("avatar_resource_id", Long.class),
-                rs.getBoolean("enabled"),
-                rs.getObject("created_at", LocalDateTime.class),
-                rs.getString("role_name"),
-                rs.getObject("store_id", Long.class),
-                rs.getString("store_name")
-            )
+            (rs, i) -> {
+                java.sql.Timestamp lockedTs = rs.getTimestamp("locked_until");
+                return new EmployeeAdminView(
+                    rs.getLong("id"),
+                    rs.getString("username"),
+                    rs.getString("first_name"),
+                    rs.getString("last_name"),
+                    rs.getString("gender"),
+                    rs.getObject("birth_date", LocalDate.class),
+                    rs.getString("email"),
+                    rs.getString("phone"),
+                    rs.getObject("hired_at", LocalDate.class),
+                    rs.getString("address"),
+                    rs.getString("notes"),
+                    rs.getObject("avatar_resource_id", Long.class),
+                    rs.getBoolean("enabled"),
+                    rs.getObject("created_at", LocalDateTime.class),
+                    rs.getString("role_name"),
+                    rs.getObject("store_id", Long.class),
+                    rs.getString("store_name"),
+                    lockedTs != null ? lockedTs.toInstant() : null
+                );
+            }
         );
     }
 
