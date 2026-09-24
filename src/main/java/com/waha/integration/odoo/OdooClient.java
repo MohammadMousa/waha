@@ -139,7 +139,8 @@ public class OdooClient {
     }
 
     private String base(String url) {
-        return url.replaceAll("/+$", "");
+        String normalized = url.contains("://") ? url : "https://" + url;
+        return normalized.replaceAll("/+$", "");
     }
 
     private String param(String inner) {
