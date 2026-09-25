@@ -64,6 +64,21 @@ public class DeviceRepository {
         return results.stream().findFirst();
     }
 
+    public Optional<DeviceAuth> findAuthById(long id) {
+        List<DeviceAuth> results = namedJdbc.query(
+            "SELECT id, organization_id, store_id, pin_code, enabled FROM devices WHERE id = :id",
+            Map.of("id", id),
+            (rs, i) -> new DeviceAuth(
+                rs.getLong("id"),
+                rs.getLong("organization_id"),
+                rs.getLong("store_id"),
+                rs.getString("pin_code"),
+                rs.getBoolean("enabled")
+            )
+        );
+        return results.stream().findFirst();
+    }
+
     public Optional<Device> findById(long id) {
         List<Device> results = namedJdbc.query(
             "SELECT id, organization_id, store_id, username, device_type FROM devices WHERE id = :id",

@@ -9,9 +9,12 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.web.bind.annotation.*;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.stream.Collectors;
 
 @RestController
@@ -22,6 +25,12 @@ public class KioskAuthController {
     private static final Set<String> KIOSK_PERMISSIONS = Permission.BY_ROLE
         .getOrDefault(Role.KIOSK, Set.of())
         .stream().map(Enum::name).collect(Collectors.toUnmodifiableSet());
+
+    private record VerifyRecord(int failCount, Instant windowStart, Instant cooldownUntil) {}
+    private final ConcurrentHashMap<Long, VerifyRecord> verifyMap = new ConcurrentHashMap<>();
+    private static final int      VERIFY_MAX_FAILS = 5;
+    private static final Duration VERIFY_WINDOW    = Duration.ofMinutes(5);
+    private static final Duration VERIFY_COOLDOWN  = Duration.ofMinutes(5);
 
     private final DeviceRepository deviceRepository;
     private final SessionService sessionService;
@@ -93,6 +102,48 @@ public class KioskAuthController {
         resp.put("mode",           "KIOSK");
         resp.put("permissions",    KIOSK_PERMISSIONS);
         return ResponseEntity.ok(resp);
+    }
+
+    @PostMapping("/pin/verify")
+    public ResponseEntity<?> verifyPin(
+            @RequestHeader(value = "Authorization", required = false) String authHeader,
+            @RequestBody Map<String, Object> body) {
+        var session = sessionService.requireSession(authHeader);
+        long deviceId = session.deviceId();
+
+        Instant now = Instant.now();
+        VerifyRecord rec = verifyMap.get(deviceId);
+        if (rec != null && rec.cooldownUntil() != null && now.isBefore(rec.cooldownUntil())) {
+            long secs = Duration.between(now, rec.cooldownUntil()).toSeconds();
+            return ResponseEntity.status(429).body(
+                new ErrorResponse("Too many wrong PINs — try again in " + ((secs / 60) + 1) + " minute(s)"));
+        }
+
+        var auth = deviceRepository.findAuthById(deviceId);
+        if (auth.isEmpty() || !auth.get().enabled())
+            return ResponseEntity.status(401).body(new ErrorResponse("Device not available"));
+
+        String pinCode = body.getOrDefault("pinCode", "").toString().trim();
+        if (pinCode.length() != 6 || !pinCode.chars().allMatch(Character::isDigit))
+            return ResponseEntity.badRequest().body(new ErrorResponse("PIN must be exactly 6 digits"));
+
+        boolean matches = encoder.matches(pinCode, auth.get().pinCode());
+        if (matches) {
+            verifyMap.remove(deviceId);
+            return ResponseEntity.ok(Map.of("valid", true));
+        }
+
+        verifyMap.compute(deviceId, (id, existing) -> {
+            if (existing == null || existing.cooldownUntil() != null
+                    || Duration.between(existing.windowStart(), Instant.now()).compareTo(VERIFY_WINDOW) > 0)
+                existing = new VerifyRecord(0, Instant.now(), null);
+            int count = existing.failCount() + 1;
+            if (count >= VERIFY_MAX_FAILS)
+                return new VerifyRecord(count, existing.windowStart(), Instant.now().plus(VERIFY_COOLDOWN));
+            return new VerifyRecord(count, existing.windowStart(), null);
+        });
+
+        return ResponseEntity.ok(Map.of("valid", false));
     }
 
     @PostMapping("/logout")
