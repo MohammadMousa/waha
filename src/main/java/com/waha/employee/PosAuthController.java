@@ -3,7 +3,11 @@ package com.waha.employee;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.waha.auth.PinLockoutService;
 import com.waha.auth.SessionService;
+import com.waha.common.AccountLockedError;
 import com.waha.common.ErrorResponse;
+import com.waha.common.InvalidCredentialsError;
+import com.waha.common.RateLimitedError;
+import jakarta.servlet.http.HttpServletRequest;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
 import org.springframework.web.bind.annotation.*;
@@ -34,7 +38,13 @@ public class PosAuthController {
     }
 
     @PostMapping("/login")
-    public ResponseEntity<?> login(@RequestBody Map<String, Object> body) {
+    public ResponseEntity<?> login(@RequestBody Map<String, Object> body, HttpServletRequest req) {
+        String ip = clientIp(req);
+        if (lockoutService.isIpLocked(ip)) {
+            long secs = lockoutService.getIpLockSeconds(ip);
+            return ResponseEntity.status(429).header("Retry-After", String.valueOf(secs)).body(RateLimitedError.of(secs));
+        }
+
         String username = body.getOrDefault("username", "").toString().trim();
         String pinCode  = body.getOrDefault("pinCode",  "").toString().trim();
         long   orgId    = body.containsKey("organizationId")
@@ -46,13 +56,35 @@ public class PosAuthController {
         var auth = employeeRepository.findAuthRecord(username, orgId);
 
         long employeeId = auth.map(EmployeeRepository.EmployeeAuth::id).orElse(-1L);
-        if (employeeId > 0 && lockoutService.isEmployeeLocked(employeeId))
-            return ResponseEntity.status(401).body(new ErrorResponse("Invalid credentials or account temporarily locked"));
+        String unknownKey = orgId + ":" + username.toLowerCase();
+
+        if (employeeId > 0) {
+            if (lockoutService.isEmployeeLocked(employeeId)) {
+                long secs = lockoutService.getEmployeeLockSeconds(employeeId);
+                return ResponseEntity.status(429).header("Retry-After", String.valueOf(secs)).body(AccountLockedError.of(secs));
+            }
+        } else {
+            if (lockoutService.isUnknownLocked(unknownKey)) {
+                long secs = lockoutService.getUnknownLockSeconds(unknownKey);
+                return ResponseEntity.status(429).header("Retry-After", String.valueOf(secs)).body(AccountLockedError.of(secs));
+            }
+        }
 
         boolean validPin = auth.isPresent() && encoder.matches(pinCode, auth.get().pinCode());
         if (!validPin) {
-            if (employeeId > 0) lockoutService.recordEmployeeFailure(employeeId);
-            return ResponseEntity.status(401).body(new ErrorResponse("Invalid credentials or account temporarily locked"));
+            lockoutService.recordIpFailure(ip);
+            int remaining;
+            long lockSecs;
+            if (employeeId > 0) {
+                remaining = lockoutService.recordEmployeeFailure(employeeId);
+                lockSecs  = lockoutService.getEmployeeLockSeconds(employeeId);
+            } else {
+                remaining = lockoutService.recordUnknownFailure(unknownKey);
+                lockSecs  = lockoutService.getUnknownLockSeconds(unknownKey);
+            }
+            if (remaining == 0)
+                return ResponseEntity.status(429).header("Retry-After", String.valueOf(lockSecs)).body(AccountLockedError.of(lockSecs));
+            return ResponseEntity.status(401).body(InvalidCredentialsError.of(remaining));
         }
 
         if (!auth.get().enabled())
@@ -87,6 +119,12 @@ public class PosAuthController {
         if (json == null) return null;
         try { return objectMapper.readValue(json, Object.class); }
         catch (Exception e) { return json; }
+    }
+
+    private static String clientIp(HttpServletRequest req) {
+        String xff = req.getHeader("X-Forwarded-For");
+        if (xff != null && !xff.isBlank()) return xff.split(",")[0].trim();
+        return req.getRemoteAddr();
     }
 
     @PostMapping("/logout")

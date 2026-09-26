@@ -1,8 +1,12 @@
 package com.waha.auth;
 
 import com.waha.auth.dto.*;
+import com.waha.common.AccountLockedError;
 import com.waha.common.ErrorResponse;
+import com.waha.common.InvalidCredentialsError;
+import com.waha.common.RateLimitedError;
 import com.waha.common.UnauthorizedException;
+import jakarta.servlet.http.HttpServletRequest;
 import com.waha.store.StoreRepository;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.crypto.bcrypt.BCryptPasswordEncoder;
@@ -25,16 +29,18 @@ public class AuthController {
     private final StoreRepository storeRepository;
     private final RoleRepository roleRepository;
     private final BCryptPasswordEncoder passwordEncoder;
+    private final PinLockoutService lockoutService;
     private final SecureRandom secureRandom = new SecureRandom();
 
     public AuthController(UserRepository userRepository, SessionService sessionService,
                           StoreRepository storeRepository, RoleRepository roleRepository,
-                          BCryptPasswordEncoder passwordEncoder) {
+                          BCryptPasswordEncoder passwordEncoder, PinLockoutService lockoutService) {
         this.userRepository  = userRepository;
         this.sessionService  = sessionService;
         this.storeRepository = storeRepository;
         this.roleRepository  = roleRepository;
         this.passwordEncoder = passwordEncoder;
+        this.lockoutService  = lockoutService;
     }
 
     private Long defaultStoreId(long orgId) {
@@ -43,6 +49,12 @@ public class AuthController {
 
     private Map<String, String> systemProperties(long orgId) {
         return storeRepository.findAllProperties(orgId);
+    }
+
+    private static String clientIp(HttpServletRequest req) {
+        String xff = req.getHeader("X-Forwarded-For");
+        if (xff != null && !xff.isBlank()) return xff.split(",")[0].trim();
+        return req.getRemoteAddr();
     }
 
     private String randomHex(int bytes) {
@@ -113,18 +125,54 @@ public class AuthController {
     }
 
     @PostMapping("/login")
-    public ResponseEntity<?> login(@RequestBody LoginRequest request) {
+    public ResponseEntity<?> login(@RequestBody LoginRequest request, HttpServletRequest req) {
+        String ip = clientIp(req);
+        if (lockoutService.isIpLocked(ip)) {
+            long secs = lockoutService.getIpLockSeconds(ip);
+            return ResponseEntity.status(429).header("Retry-After", String.valueOf(secs)).body(RateLimitedError.of(secs));
+        }
+
         var record = userRepository.findPasswordRecord(
             request.username() == null ? "" : request.username(),
             request.organizationId()
         );
 
+        long userId = record.map(r -> r.id()).orElse(-1L);
+        long loginOrgId2 = request.organizationId() != null ? request.organizationId() : 1L;
+        String unknownKey = loginOrgId2 + ":" + (request.username() == null ? "" : request.username().toLowerCase().trim());
+
+        if (userId > 0) {
+            if (lockoutService.isUserLocked(userId)) {
+                long secs = lockoutService.getUserLockSeconds(userId);
+                return ResponseEntity.status(429).header("Retry-After", String.valueOf(secs)).body(AccountLockedError.of(secs));
+            }
+        } else {
+            if (lockoutService.isUnknownLocked(unknownKey)) {
+                long secs = lockoutService.getUnknownLockSeconds(unknownKey);
+                return ResponseEntity.status(429).header("Retry-After", String.valueOf(secs)).body(AccountLockedError.of(secs));
+            }
+        }
+
         boolean valid = record.isPresent()
             && passwordEncoder.matches(request.password() == null ? "" : request.password(), record.get().passwordHash());
 
         if (!valid) {
-            return ResponseEntity.status(401).body(new ErrorResponse("Invalid username or password"));
+            lockoutService.recordIpFailure(ip);
+            int remaining;
+            long lockSecs;
+            if (userId > 0) {
+                remaining = lockoutService.recordUserFailure(userId);
+                lockSecs  = lockoutService.getUserLockSeconds(userId);
+            } else {
+                remaining = lockoutService.recordUnknownFailure(unknownKey);
+                lockSecs  = lockoutService.getUnknownLockSeconds(unknownKey);
+            }
+            if (remaining == 0)
+                return ResponseEntity.status(429).header("Retry-After", String.valueOf(lockSecs)).body(AccountLockedError.of(lockSecs));
+            return ResponseEntity.status(401).body(InvalidCredentialsError.ofPassword(remaining));
         }
+
+        if (userId > 0) lockoutService.recordUserSuccess(userId);
 
         String mode = extractMode(request.sessionProperties());
         if ("__INVALID__".equals(mode)) {
