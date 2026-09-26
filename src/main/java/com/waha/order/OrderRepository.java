@@ -9,6 +9,7 @@ import com.waha.product.Product;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.jdbc.core.SqlOutParameter;
+import org.springframework.jdbc.core.SqlParameter;
 import org.springframework.jdbc.core.simple.SimpleJdbcCall;
 import org.springframework.jdbc.core.simple.SimpleJdbcInsert;
 import org.springframework.stereotype.Repository;
@@ -47,15 +48,28 @@ public class OrderRepository {
         this.jdbcTemplate = jdbcTemplate;
 
         this.createOrderCall = new SimpleJdbcCall(jdbcTemplate)
+            .withoutProcedureColumnMetaDataAccess()
             .withProcedureName("sp_create_order_idempotent")
             .declareParameters(
-                new SqlOutParameter("p_was_created", Types.BOOLEAN)
+                new SqlParameter("p_id",              Types.CHAR),
+                new SqlParameter("p_store_id",        Types.BIGINT),
+                new SqlParameter("p_currency",        Types.CHAR),
+                new SqlParameter("p_tax_rate",        Types.DECIMAL),
+                new SqlParameter("p_username",        Types.VARCHAR),
+                new SqlParameter("p_subtotal_amount", Types.DECIMAL),
+                new SqlParameter("p_tax_amount",      Types.DECIMAL),
+                new SqlOutParameter("p_was_created",  Types.BOOLEAN)
             );
 
         this.markPaidCall = new SimpleJdbcCall(jdbcTemplate)
+            .withoutProcedureColumnMetaDataAccess()
             .withProcedureName("sp_mark_order_paid")
             .declareParameters(
-                new SqlOutParameter("p_success", Types.BOOLEAN)
+                new SqlParameter("p_order_id",          Types.CHAR),
+                new SqlParameter("p_expected_version",  Types.INTEGER),
+                new SqlParameter("p_payment_reference", Types.VARCHAR),
+                new SqlParameter("p_sub_status",        Types.VARCHAR),
+                new SqlOutParameter("p_success",        Types.BOOLEAN)
             );
 
         this.orderItemsInsert = new SimpleJdbcInsert(jdbcTemplate)

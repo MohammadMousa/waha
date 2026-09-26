@@ -95,6 +95,39 @@ public class ExternalSystemRepository {
         );
     }
 
+    // ── Catalog-pull log (written to sync_queue, entity_type = 'CATALOG_PULL') ─
+
+    public long insertCatalogPullLog(long systemId, String triggeredBy) {
+        org.springframework.jdbc.support.KeyHolder kh = new org.springframework.jdbc.support.GeneratedKeyHolder();
+        jdbc.getJdbcOperations().update(con -> {
+            java.sql.PreparedStatement ps = con.prepareStatement(
+                "INSERT INTO sync_queue (system_id, entity_type, entity_id, operation, payload, status) " +
+                "VALUES (?, 'CATALOG_PULL', ?, 'PULL', JSON_OBJECT('triggeredBy', ?), 'PENDING')",
+                java.sql.Statement.RETURN_GENERATED_KEYS);
+            ps.setLong(1, systemId);
+            ps.setString(2, String.valueOf(systemId));
+            ps.setString(3, triggeredBy);
+            return ps;
+        }, kh);
+        return kh.getKey().longValue();
+    }
+
+    public void completeCatalogPullLog(long logId, int categoriesPulled, int productsPulled) {
+        String result = "Pulled " + categoriesPulled + " categories, " + productsPulled + " products";
+        jdbc.update(
+            "UPDATE sync_queue SET status = 'DONE', attempts = attempts + 1, last_error = :result, " +
+            "payload = JSON_SET(payload, '$.categoriesPulled', :cats, '$.productsPulled', :prods) WHERE id = :id",
+            Map.of("id", logId, "result", result, "cats", categoriesPulled, "prods", productsPulled)
+        );
+    }
+
+    public void failCatalogPullLog(long logId, String errorMessage) {
+        jdbc.update(
+            "UPDATE sync_queue SET status = 'FAILED', attempts = attempts + 1, last_error = :err WHERE id = :id",
+            Map.of("id", logId, "err", errorMessage != null ? errorMessage : "Unknown error")
+        );
+    }
+
     private static Instant toInstant(Timestamp ts) {
         return ts == null ? null : ts.toInstant();
     }

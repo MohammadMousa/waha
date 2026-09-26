@@ -62,9 +62,18 @@ public class ResourceController {
 
         String sha256 = sha256Hex(data);
 
+        var session = sessionService.requireSession(auth);
+        Long deviceId = session.deviceId();
+
         // Deduplication: same content already stored — return existing id.
-        long id = resourceRepository.findIdBySha256(sha256)
-            .orElseGet(() -> resourceRepository.store(filename, mimeType, data.length, sha256, data));
+        // For device uploads we always store fresh so device_id is recorded.
+        long id;
+        if (deviceId != null) {
+            id = resourceRepository.store(filename, mimeType, data.length, sha256, data, deviceId);
+        } else {
+            id = resourceRepository.findIdBySha256(sha256)
+                .orElseGet(() -> resourceRepository.store(filename, mimeType, data.length, sha256, data));
+        }
 
         return ResponseEntity.ok(Map.of("id", id, "sha256", sha256));
     }
@@ -73,12 +82,16 @@ public class ResourceController {
     // the same id always returns the same bytes — safe to cache forever.
     // ETag = sha256. Clients send If-None-Match on repeat requests; if the
     // etag matches we return 304 with no body, saving the round-trip.
+    // Device-uploaded logs (device_id IS NOT NULL) are not public — use /api/logs/{id}.
     @GetMapping("/{id}")
     public ResponseEntity<?> serve(@PathVariable long id,
                                     @RequestHeader(value = HttpHeaders.IF_NONE_MATCH, required = false) String ifNoneMatch) {
-        var meta = resourceRepository.findMetaById(id);
+        var meta = resourceRepository.findMetaById2(id);
         if (meta.isEmpty()) {
             return ResponseEntity.status(404).body(new ErrorResponse("Resource " + id + " not found"));
+        }
+        if (meta.get().deviceId() != null) {
+            return ResponseEntity.status(401).body(new ErrorResponse("Access denied"));
         }
 
         String etag = "\"" + meta.get().sha256() + "\"";

@@ -20,7 +20,10 @@ public class ResourceRepository {
     }
 
     public record ResourceMeta(long id, String filename, String mimeType, long sizeBytes, String sha256) {}
+    public record ResourceMeta2(long id, String filename, String mimeType, long sizeBytes, String sha256, Long deviceId) {}
     public record ResourceWithData(long id, String filename, String mimeType, long sizeBytes, byte[] data) {}
+    public record LogEntry(long id, java.time.Instant createdAt, long deviceId, String deviceName, long storeId, String storeName, long sizeBytes) {}
+    public record LogCount(long totalCount, long totalSizeBytes) {}
 
     // Deduplication check: same SHA-256 = same bytes, no need to store again.
     public Optional<Long> findIdBySha256(String sha256) {
@@ -34,16 +37,21 @@ public class ResourceRepository {
 
     // Stores metadata + blob in one transaction. Returns the new resource id.
     public long store(String filename, String mimeType, long sizeBytes, String sha256, byte[] data) {
+        return store(filename, mimeType, sizeBytes, sha256, data, null);
+    }
+
+    public long store(String filename, String mimeType, long sizeBytes, String sha256, byte[] data, Long deviceId) {
         KeyHolder keyHolder = new GeneratedKeyHolder();
         jdbcTemplate.update(con -> {
             PreparedStatement ps = con.prepareStatement(
-                "INSERT INTO resources (filename, mime_type, size_bytes, sha256) VALUES (?, ?, ?, ?)",
+                "INSERT INTO resources (filename, mime_type, size_bytes, sha256, device_id) VALUES (?, ?, ?, ?, ?)",
                 Statement.RETURN_GENERATED_KEYS
             );
             ps.setString(1, filename);
             ps.setString(2, mimeType);
             ps.setLong(3, sizeBytes);
             ps.setString(4, sha256);
+            if (deviceId != null) ps.setLong(5, deviceId); else ps.setNull(5, java.sql.Types.BIGINT);
             return ps;
         }, keyHolder);
 
@@ -79,6 +87,104 @@ public class ResourceRepository {
             id
         );
         return results.stream().findFirst();
+    }
+
+    public Optional<ResourceMeta2> findMetaById2(long id) {
+        List<ResourceMeta2> results = jdbcTemplate.query(
+            "SELECT id, filename, mime_type, size_bytes, sha256, device_id FROM resources WHERE id = ?",
+            (rs, i) -> {
+                long did = rs.getLong("device_id"); Long deviceId = rs.wasNull() ? null : did;
+                return new ResourceMeta2(rs.getLong("id"), rs.getString("filename"),
+                    rs.getString("mime_type"), rs.getLong("size_bytes"), rs.getString("sha256"), deviceId);
+            }, id
+        );
+        return results.stream().findFirst();
+    }
+
+    // ── Device log queries ─────────────────────────────────────────────────────
+
+    public List<LogEntry> listLogs(long orgId, Long deviceId, java.time.Instant from, java.time.Instant to, int offset, int size) {
+        StringBuilder sql = new StringBuilder(
+            "SELECT r.id, r.created_at, r.device_id, d.username AS device_name, " +
+            "       d.store_id, s.name AS store_name, r.size_bytes " +
+            "FROM resources r " +
+            "JOIN devices d ON d.id = r.device_id " +
+            "JOIN stores s  ON s.id = d.store_id " +
+            "WHERE d.organization_id = ? AND r.device_id IS NOT NULL"
+        );
+        java.util.List<Object> params = new java.util.ArrayList<>();
+        params.add(orgId);
+        if (deviceId != null) { sql.append(" AND r.device_id = ?"); params.add(deviceId); }
+        if (from != null)     { sql.append(" AND r.created_at >= ?"); params.add(java.sql.Timestamp.from(from)); }
+        if (to != null)       { sql.append(" AND r.created_at <= ?"); params.add(java.sql.Timestamp.from(to)); }
+        sql.append(" ORDER BY r.created_at DESC LIMIT ? OFFSET ?");
+        params.add(size);
+        params.add(offset);
+        return jdbcTemplate.query(sql.toString(), (rs, i) ->
+            new LogEntry(rs.getLong("id"), rs.getTimestamp("created_at").toInstant(),
+                rs.getLong("device_id"), rs.getString("device_name"),
+                rs.getLong("store_id"), rs.getString("store_name"), rs.getLong("size_bytes")),
+            params.toArray()
+        );
+    }
+
+    public LogCount countLogs(long orgId, Long deviceId, java.time.Instant from, java.time.Instant to) {
+        StringBuilder sql = new StringBuilder(
+            "SELECT COUNT(*) AS cnt, COALESCE(SUM(r.size_bytes), 0) AS total_size " +
+            "FROM resources r JOIN devices d ON d.id = r.device_id " +
+            "WHERE d.organization_id = ? AND r.device_id IS NOT NULL"
+        );
+        java.util.List<Object> params = new java.util.ArrayList<>();
+        params.add(orgId);
+        if (deviceId != null) { sql.append(" AND r.device_id = ?"); params.add(deviceId); }
+        if (from != null)     { sql.append(" AND r.created_at >= ?"); params.add(java.sql.Timestamp.from(from)); }
+        if (to != null)       { sql.append(" AND r.created_at <= ?"); params.add(java.sql.Timestamp.from(to)); }
+        return jdbcTemplate.queryForObject(sql.toString(),
+            (rs, i) -> new LogCount(rs.getLong("cnt"), rs.getLong("total_size")),
+            params.toArray()
+        );
+    }
+
+    public boolean isLogOwnedByOrg(long id, long orgId) {
+        List<Long> rows = jdbcTemplate.query(
+            "SELECT r.id FROM resources r JOIN devices d ON d.id = r.device_id " +
+            "WHERE r.id = ? AND d.organization_id = ? AND r.device_id IS NOT NULL",
+            (rs, i) -> rs.getLong("id"), id, orgId
+        );
+        return !rows.isEmpty();
+    }
+
+    public boolean deleteLog(long id, long orgId) {
+        if (!isLogOwnedByOrg(id, orgId)) return false;
+        jdbcTemplate.update("DELETE FROM resource_data WHERE resource_id = ?", id);
+        jdbcTemplate.update("DELETE FROM resources WHERE id = ?", id);
+        return true;
+    }
+
+    public int deleteLogs(List<Long> ids, long orgId) {
+        if (ids.isEmpty()) return 0;
+        int deleted = 0;
+        for (long id : ids) {
+            if (deleteLog(id, orgId)) deleted++;
+        }
+        return deleted;
+    }
+
+    public int deleteLogsOlderThan(java.time.Instant cutoff) {
+        List<Long> ids = jdbcTemplate.query(
+            "SELECT id FROM resources WHERE device_id IS NOT NULL AND created_at < ?",
+            (rs, i) -> rs.getLong("id"), java.sql.Timestamp.from(cutoff)
+        );
+        for (long id : ids) {
+            jdbcTemplate.update("DELETE FROM resource_data WHERE resource_id = ?", id);
+        }
+        if (!ids.isEmpty()) {
+            jdbcTemplate.update(
+                "DELETE FROM resources WHERE device_id IS NOT NULL AND created_at < ?",
+                java.sql.Timestamp.from(cutoff)
+            );
+        }
+        return ids.size();
     }
 
     // ── Named resource library ─────────────────────────────────────────────────

@@ -204,6 +204,13 @@ public class OdooCatalogService {
         if (existing.isPresent()) {
             localId = Long.parseLong(existing.get().localId());
             updateProduct(localId, nameJson, BigDecimal.valueOf(price), localCategoryId, active);
+            // Keep primary barcode in product_barcodes in sync with Odoo's barcode.
+            jdbc.getJdbcTemplate().update(
+                "DELETE FROM product_barcodes WHERE product_id = ? AND is_primary = 1 AND barcode != ?",
+                localId, barcode);
+            jdbc.getJdbcTemplate().update(
+                "INSERT IGNORE INTO product_barcodes (product_id, barcode, is_primary) VALUES (?, ?, 1)",
+                localId, barcode);
         } else {
             localId = insertProduct(barcode, nameJson, BigDecimal.valueOf(price), localCategoryId, active);
             mappingRepo.save(systemId, "PRODUCT", String.valueOf(localId), String.valueOf(odooId), null);
@@ -247,7 +254,12 @@ public class OdooCatalogService {
             "VALUES (:barcode, :name, '{}', :price, :active, TRUE, 1, :categoryId, NOW())",
             p
         );
-        return jdbc.queryForObject("SELECT LAST_INSERT_ID()", Map.of(), Long.class);
+        long productId = jdbc.queryForObject("SELECT LAST_INSERT_ID()", Map.of(), Long.class);
+        jdbc.getJdbcTemplate().update(
+            "INSERT IGNORE INTO product_barcodes (product_id, barcode, is_primary) VALUES (?, ?, 1)",
+            productId, barcode
+        );
+        return productId;
     }
 
     private void updateProduct(long id, String nameJson, BigDecimal price, Long categoryId, boolean active) {

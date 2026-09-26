@@ -20,15 +20,18 @@ public class OdooAdminController {
     private final ExternalSystemRepository systemRepo;
     private final OdooCatalogService catalogService;
     private final OdooOrderSyncService orderSyncService;
+    private final OdooSyncJob syncJob;
     private final SessionService sessionService;
 
     public OdooAdminController(ExternalSystemRepository systemRepo,
                                 OdooCatalogService catalogService,
                                 OdooOrderSyncService orderSyncService,
+                                OdooSyncJob syncJob,
                                 SessionService sessionService) {
         this.systemRepo       = systemRepo;
         this.catalogService   = catalogService;
         this.orderSyncService = orderSyncService;
+        this.syncJob          = syncJob;
         this.sessionService   = sessionService;
     }
 
@@ -132,8 +135,12 @@ public class OdooAdminController {
 
         try {
             requireOwner(storeId);
-            int count = catalogService.pullCategories();
-            return ResponseEntity.ok(Map.of("pulled", count, "entityType", "CATEGORY"));
+            ExternalSystem sys = systemRepo.findByName("ODOO").orElseThrow();
+            OdooSyncJob.SyncResult result = syncJob.runSync(sys, "MANUAL");
+            if (!result.success()) {
+                return ResponseEntity.status(502).body(new ErrorResponse("Odoo error: " + result.errorMessage()));
+            }
+            return ResponseEntity.ok(Map.of("pulled", result.categoriesPulled(), "entityType", "CATEGORY"));
         } catch (OdooException e) {
             return ResponseEntity.status(502).body(new ErrorResponse("Odoo error: " + e.getMessage()));
         } catch (ForbiddenException e) {
@@ -156,10 +163,14 @@ public class OdooAdminController {
 
         try {
             requireOwner(storeId);
-            int pulled  = catalogService.pullProducts();
+            ExternalSystem sys = systemRepo.findByName("ODOO").orElseThrow();
+            OdooSyncJob.SyncResult result = syncJob.runSync(sys, "MANUAL");
+            if (!result.success()) {
+                return ResponseEntity.status(502).body(new ErrorResponse("Odoo error: " + result.errorMessage()));
+            }
             int visible = catalogService.countVisibleProducts(1L);
             Map<String, Object> body = new java.util.HashMap<>();
-            body.put("pulled",     pulled);
+            body.put("pulled",     result.productsPulled());
             body.put("visible",    visible);
             body.put("entityType", "PRODUCT");
             return ResponseEntity.ok(body);

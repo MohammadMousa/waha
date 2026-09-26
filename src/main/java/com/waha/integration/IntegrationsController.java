@@ -2,6 +2,7 @@ package com.waha.integration;
 
 import com.waha.auth.Permission;
 import com.waha.auth.SessionService;
+import com.waha.auth.UserSession;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -30,11 +31,13 @@ public class IntegrationsController {
             @RequestParam(defaultValue = "0")  int page,
             @RequestParam(defaultValue = "20") int size) {
 
-        sessionService.requirePermission(auth, Permission.MANAGE_STORES, 1L);
+        UserSession session = sessionService.requireSession(auth);
+        sessionService.requirePermission(auth, Permission.MANAGE_STORES, session.storeId());
         if (size < 1 || size > 200) size = 20;
 
-        long total = integrationsAdminRepository.countLogs(entityType, status);
-        List<Map<String, Object>> items = integrationsAdminRepository.getLogs(entityType, status, page, size);
+        long orgId = session.organizationId();
+        long total = integrationsAdminRepository.countLogs(orgId, entityType, status);
+        List<Map<String, Object>> items = integrationsAdminRepository.getLogs(orgId, entityType, status, page, size);
 
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("items",      items);
