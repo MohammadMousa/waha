@@ -54,4 +54,24 @@ public class ConfigService {
             orgId);
         return props;
     }
+
+    // Returns only the rows explicitly set for this org (no global merge).
+    public java.util.List<java.util.Map<String, Object>> listOrgProperties(long orgId) {
+        return jdbc.queryForList(
+            "SELECT `key`, value, description FROM system_properties WHERE organization_id = ? ORDER BY `key`",
+            orgId);
+    }
+
+    public void upsertOrgProperty(long orgId, String key, String value, String description) {
+        jdbc.update(
+            "INSERT INTO system_properties (organization_id, `key`, value, description) VALUES (?, ?, ?, ?) " +
+            "ON DUPLICATE KEY UPDATE value = VALUES(value), description = VALUES(description)",
+            orgId, key, value, description != null ? description : "");
+    }
+
+    public void deleteOrgProperty(long orgId, String key) {
+        jdbc.update(
+            "DELETE FROM system_properties WHERE organization_id = ? AND `key` = ?",
+            orgId, key);
+    }
 }

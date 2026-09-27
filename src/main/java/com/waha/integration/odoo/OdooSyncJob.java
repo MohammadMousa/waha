@@ -20,7 +20,7 @@ public class OdooSyncJob {
         this.catalogService = catalogService;
     }
 
-    @Scheduled(cron = "0 0 6 * * *")
+    @Scheduled(cron = "0 0 3 * * *")
     public void runDailySync() {
         systemRepo.findByName("ODOO").ifPresent(sys -> runSync(sys, "SCHEDULED"));
     }
