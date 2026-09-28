@@ -185,6 +185,34 @@ public class OdooAdminController {
         }
     }
 
+    // ── POST /api/admin/odoo/pull/products/full ───────────────────────────────
+    // Forces a complete re-pull from Odoo, ignoring lastProductSyncAt.
+    // Returns a breakdown of what was added, updated, or skipped.
+    @PostMapping("/pull/products/full")
+    public ResponseEntity<?> fullPullProducts(
+            @RequestHeader(value = "Authorization", required = false) String auth) {
+        try {
+            com.waha.auth.UserSession session = sessionService.requireSession(auth);
+            sessionService.requirePermissionForOrg(auth, Permission.MANAGE_STORES, session.organizationId());
+        } catch (UnauthorizedException e) {
+            return ResponseEntity.status(401).body(new ErrorResponse(e.getMessage()));
+        } catch (ForbiddenException e) {
+            return ResponseEntity.status(403).body(new ErrorResponse(e.getMessage()));
+        }
+
+        try {
+            OdooCatalogService.FullPullResult result = catalogService.fullPullProducts();
+            Map<String, Object> body = new java.util.HashMap<>();
+            body.put("added",   result.added());
+            body.put("updated", result.updated());
+            body.put("skipped", result.skipped());
+            body.put("total",   result.total());
+            return ResponseEntity.ok(body);
+        } catch (OdooException e) {
+            return ResponseEntity.status(502).body(new ErrorResponse("Odoo error: " + e.getMessage()));
+        }
+    }
+
     // ── POST /api/admin/odoo/push/orders ──────────────────────────────────────
     @PostMapping("/push/orders")
     public ResponseEntity<?> pushOrders(

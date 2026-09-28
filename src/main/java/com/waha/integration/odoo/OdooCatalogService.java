@@ -127,6 +127,8 @@ public class OdooCatalogService {
 
     // ── Product pull ──────────────────────────────────────────────────────────
 
+    public record FullPullResult(int added, int updated, int skipped, int total) {}
+
     public int pullProducts() {
         ExternalSystem sys = requireSystem();
         Instant since = sys.lastProductSyncAt();
@@ -166,7 +168,46 @@ public class OdooCatalogService {
         return total;
     }
 
-    private void upsertProduct(long systemId, JsonNode row) throws Exception {
+    // Full pull — ignores lastProductSyncAt and fetches all products from Odoo.
+    // Returns a breakdown of what changed so the caller can report it.
+    public FullPullResult fullPullProducts() {
+        ExternalSystem sys = requireSystem();
+        int added = 0, updated = 0, skipped = 0;
+        int offset = 0;
+        final int PAGE = 100;
+
+        while (true) {
+            List<JsonNode> rows = odooClient.searchRead(
+                sys.baseUrl(), sys.apiKey(), sys.username(),
+                "product.template", List.of(),
+                List.of("id", "name", "description_sale", "list_price",
+                        "categ_id", "barcode", "active", "write_date", "image_512"),
+                PAGE, offset
+            );
+
+            if (rows.isEmpty()) break;
+
+            for (JsonNode row : rows) {
+                try {
+                    boolean isNew = upsertProduct(sys.id(), row);
+                    if (isNew) added++; else updated++;
+                } catch (Exception e) {
+                    log.warn("Skipping Odoo product id={} during full pull: {}", row.path("id").asLong(), e.getMessage());
+                    skipped++;
+                }
+            }
+
+            if (rows.size() < PAGE) break;
+            offset += PAGE;
+        }
+
+        int total = added + updated + skipped;
+        systemRepo.updateLastProductSyncAt(sys.id(), Instant.now());
+        log.info("Odoo full product pull: added={}, updated={}, skipped={}, total={}", added, updated, skipped, total);
+        return new FullPullResult(added, updated, skipped, total);
+    }
+
+    private boolean upsertProduct(long systemId, JsonNode row) throws Exception {
         long odooId    = row.path("id").asLong();
         String enName  = row.path("name").asText("");
         double price   = row.path("list_price").asDouble(0.0);
@@ -201,6 +242,7 @@ public class OdooCatalogService {
 
         Optional<ExternalMapping> existing = mappingRepo.findByExternalId(systemId, "PRODUCT", String.valueOf(odooId));
         long localId;
+        boolean isNew;
         if (existing.isPresent()) {
             localId = Long.parseLong(existing.get().localId());
             updateProduct(localId, nameJson, BigDecimal.valueOf(price), localCategoryId, active);
@@ -211,13 +253,16 @@ public class OdooCatalogService {
             jdbc.getJdbcTemplate().update(
                 "INSERT IGNORE INTO product_barcodes (product_id, barcode, is_primary) VALUES (?, ?, 1)",
                 localId, barcode);
+            isNew = false;
         } else {
             localId = insertProduct(barcode, nameJson, BigDecimal.valueOf(price), localCategoryId, active);
             mappingRepo.save(systemId, "PRODUCT", String.valueOf(localId), String.valueOf(odooId), null);
+            isNew = true;
         }
         if (imageBase64 != null) {
             storeProductImage(localId, odooId, imageBase64);
         }
+        return isNew;
     }
 
     private void storeProductImage(long productId, long odooId, String base64) {
