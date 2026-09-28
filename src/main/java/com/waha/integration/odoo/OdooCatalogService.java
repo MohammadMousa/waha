@@ -129,6 +129,12 @@ public class OdooCatalogService {
 
     public record FullPullResult(int added, int updated, int skipped, int total) {}
 
+    // Pulled from product.product (variants): sale order lines reference variant IDs,
+    // so mappings must hold variant IDs, never template IDs.
+    private static final List<String> PRODUCT_FIELDS = List.of(
+        "id", "name", "description_sale", "lst_price", "categ_id", "barcode",
+        "active", "write_date", "image_512", "product_tmpl_id");
+
     public int pullProducts() {
         ExternalSystem sys = requireSystem();
         Instant since = sys.lastProductSyncAt();
@@ -142,9 +148,7 @@ public class OdooCatalogService {
 
             List<JsonNode> rows = odooClient.searchRead(
                 sys.baseUrl(), sys.apiKey(), sys.username(),
-                "product.template", fullDomain,
-                List.of("id", "name", "description_sale", "list_price",
-                        "categ_id", "barcode", "active", "write_date", "image_512"),
+                "product.product", fullDomain, PRODUCT_FIELDS,
                 PAGE, offset
             );
 
@@ -179,9 +183,7 @@ public class OdooCatalogService {
         while (true) {
             List<JsonNode> rows = odooClient.searchRead(
                 sys.baseUrl(), sys.apiKey(), sys.username(),
-                "product.template", List.of(),
-                List.of("id", "name", "description_sale", "list_price",
-                        "categ_id", "barcode", "active", "write_date", "image_512"),
+                "product.product", List.of(), PRODUCT_FIELDS,
                 PAGE, offset
             );
 
@@ -208,12 +210,14 @@ public class OdooCatalogService {
     }
 
     private boolean upsertProduct(long systemId, JsonNode row) throws Exception {
-        long odooId    = row.path("id").asLong();
-        String enName  = row.path("name").asText("");
-        double price   = row.path("list_price").asDouble(0.0);
-        boolean active = row.path("active").asBoolean(true);
+        long odooId     = row.path("id").asLong();
+        long templateId = many2oneId(row.path("product_tmpl_id"));
+        String enName   = row.path("name").asText("");
+        double price    = row.path("lst_price").asDouble(0.0);
+        boolean active  = row.path("active").asBoolean(true);
 
-        String barcode = "ODOO_" + odooId;
+        // Placeholder stays keyed by template ID so products created by earlier template-based pulls keep it.
+        String barcode = "ODOO_" + (templateId > 0 ? templateId : odooId);
         JsonNode bcNode = row.path("barcode");
         if (bcNode.isTextual() && !bcNode.asText().isBlank()) {
             barcode = bcNode.asText();
@@ -240,11 +244,29 @@ public class OdooCatalogService {
             imageBase64 = imgNode.asText();
         }
 
+        // Legacy mappings may hold template IDs, so a variant ID can collide with another product's
+        // mapping. The barcode decides which local product this Odoo variant really is.
         Optional<ExternalMapping> existing = mappingRepo.findByExternalId(systemId, "PRODUCT", String.valueOf(odooId));
+        Optional<Long> byBarcode = findLocalProductByBarcode(barcode);
+        Long matchedId = null;
+        if (existing.isPresent()) {
+            long mappedId = Long.parseLong(existing.get().localId());
+            if (byBarcode.isPresent() && byBarcode.get() != mappedId) {
+                mappingRepo.deleteById(existing.get().id());
+                matchedId = byBarcode.get();
+                mappingRepo.save(systemId, "PRODUCT", String.valueOf(matchedId), String.valueOf(odooId), null);
+            } else {
+                matchedId = mappedId;
+            }
+        } else if (byBarcode.isPresent()) {
+            matchedId = byBarcode.get();
+            mappingRepo.save(systemId, "PRODUCT", String.valueOf(matchedId), String.valueOf(odooId), null);
+        }
+
         long localId;
         boolean isNew;
-        if (existing.isPresent()) {
-            localId = Long.parseLong(existing.get().localId());
+        if (matchedId != null) {
+            localId = matchedId;
             updateProduct(localId, nameJson, BigDecimal.valueOf(price), localCategoryId, active);
             // Keep primary barcode in product_barcodes in sync with Odoo's barcode.
             jdbc.getJdbcTemplate().update(
@@ -263,6 +285,19 @@ public class OdooCatalogService {
             storeProductImage(localId, odooId, imageBase64);
         }
         return isNew;
+    }
+
+    private Optional<Long> findLocalProductByBarcode(String barcode) {
+        List<Long> ids = jdbc.getJdbcTemplate().query(
+            "SELECT product_id FROM product_barcodes WHERE barcode = ? LIMIT 1",
+            (rs, i) -> rs.getLong(1), barcode);
+        return ids.stream().findFirst();
+    }
+
+    private static long many2oneId(JsonNode node) {
+        if (node.isArray() && node.size() > 0) return node.get(0).asLong();
+        if (node.isNumber()) return node.asLong();
+        return 0;
     }
 
     private void storeProductImage(long productId, long odooId, String base64) {
@@ -317,64 +352,123 @@ public class OdooCatalogService {
 
     // ── Mapping repair ────────────────────────────────────────────────────────
 
-    public record RepairResult(int valid, int remapped, int deadDeleted, List<Long> orphanedProductIds) {}
+    public record RepairChange(long localProductId, String fromOdooId, String toOdooId, String action) {}
 
-    // Walks all PRODUCT mappings, verifies each against Odoo in batches of 50.
-    // Stale IDs are re-anchored by barcode when possible, otherwise deleted.
-    // Local products whose mapping was deleted (no barcode match) are returned as orphans.
-    public RepairResult repairMappings() {
+    public record RepairResult(boolean dryRun, int valid, int remapped, int deadDeleted, int conflicts,
+                               List<Long> orphanedProductIds, List<RepairChange> changes) {}
+
+    // Re-derives every PRODUCT mapping from the local product's barcode and points it at the
+    // matching Odoo variant (product.product). Also converts legacy template-ID mappings.
+    // Mappings with no matching variant are deleted; clashes are reported, never forced.
+    // dryRun=true computes the same result without writing anything.
+    public RepairResult repairMappings(boolean dryRun) {
         ExternalSystem sys = requireSystem();
         List<ExternalMapping> all = mappingRepo.findAllByEntityType(sys.id(), "PRODUCT");
 
-        int valid = 0, remapped = 0, deadDeleted = 0;
+        Map<String, Long> mappingIdByOdooId = new HashMap<>();
+        for (ExternalMapping m : all) mappingIdByOdooId.put(m.externalId(), m.id());
+
+        int valid = 0, remapped = 0, deadDeleted = 0, conflicts = 0;
         List<Long> orphans = new ArrayList<>();
+        List<RepairChange> changes = new ArrayList<>();
         final int BATCH = 50;
 
         for (int i = 0; i < all.size(); i += BATCH) {
             List<ExternalMapping> batch = all.subList(i, Math.min(i + BATCH, all.size()));
 
-            List<Long> batchOdooIds = batch.stream()
-                .map(m -> Long.parseLong(m.externalId()))
-                .collect(java.util.stream.Collectors.toList());
+            Map<Long, String> barcodeByLocal = new HashMap<>();
+            List<String> barcodes = new ArrayList<>();
+            List<Long> templateIds = new ArrayList<>();
+            for (ExternalMapping m : batch) {
+                long localId = Long.parseLong(m.localId());
+                String bc = findPrimaryBarcode(localId);
+                if (bc == null) continue;
+                barcodeByLocal.put(localId, bc);
+                Long tmpl = placeholderTemplateId(bc);
+                if (tmpl != null) templateIds.add(tmpl); else barcodes.add(bc);
+            }
 
-            List<Long> stillExist = odooClient.search(sys.baseUrl(), sys.apiKey(), sys.username(),
-                "product.template",
-                List.of(List.of("id", "in", batchOdooIds)));
-            java.util.Set<Long> existSet = new java.util.HashSet<>(stillExist);
+            Map<String, List<Long>> variantsByBarcode = new HashMap<>();
+            if (!barcodes.isEmpty()) {
+                for (JsonNode v : searchVariants(sys, List.of("barcode", "in", barcodes))) {
+                    variantsByBarcode.computeIfAbsent(v.path("barcode").asText(), k -> new ArrayList<>())
+                        .add(v.path("id").asLong());
+                }
+            }
+            Map<Long, List<Long>> variantsByTemplate = new HashMap<>();
+            if (!templateIds.isEmpty()) {
+                for (JsonNode v : searchVariants(sys, List.of("product_tmpl_id", "in", templateIds))) {
+                    variantsByTemplate.computeIfAbsent(many2oneId(v.path("product_tmpl_id")), k -> new ArrayList<>())
+                        .add(v.path("id").asLong());
+                }
+            }
 
             for (ExternalMapping mapping : batch) {
-                long odooId = Long.parseLong(mapping.externalId());
-                if (existSet.contains(odooId)) {
-                    valid++;
+                long localId = Long.parseLong(mapping.localId());
+                String current = mapping.externalId();
+                String bc = barcodeByLocal.get(localId);
+                List<Long> candidates = List.of();
+                if (bc != null) {
+                    Long tmpl = placeholderTemplateId(bc);
+                    candidates = tmpl != null
+                        ? variantsByTemplate.getOrDefault(tmpl, List.of())
+                        : variantsByBarcode.getOrDefault(bc, List.of());
+                }
+
+                if (candidates.isEmpty()) {
+                    if (!dryRun) mappingRepo.deleteById(mapping.id());
+                    mappingIdByOdooId.remove(current);
+                    deadDeleted++;
+                    orphans.add(localId);
+                    changes.add(new RepairChange(localId, current, null, "DELETED"));
+                    continue;
+                }
+                if (candidates.size() > 1) {
+                    conflicts++;
+                    changes.add(new RepairChange(localId, current, null, "AMBIGUOUS_SEVERAL_VARIANTS"));
                     continue;
                 }
 
-                // Odoo product gone — try to remap by barcode
-                String barcode = findPrimaryBarcode(Long.parseLong(mapping.localId()));
-                boolean fixed = false;
-                if (barcode != null && !barcode.startsWith("ODOO_")) {
-                    List<Long> byBarcode = odooClient.search(sys.baseUrl(), sys.apiKey(), sys.username(),
-                        "product.template",
-                        List.of(List.of("barcode", "=", barcode)));
-                    if (!byBarcode.isEmpty()) {
-                        mappingRepo.updateExternalId(mapping.id(), String.valueOf(byBarcode.get(0)));
-                        remapped++;
-                        fixed = true;
-                        log.info("Remapped product localId={} from Odoo {} to {}", mapping.localId(), odooId, byBarcode.get(0));
-                    }
+                String target = String.valueOf(candidates.get(0));
+                if (target.equals(current)) {
+                    valid++;
+                    continue;
                 }
-
-                if (!fixed) {
-                    mappingRepo.deleteById(mapping.id());
-                    deadDeleted++;
-                    orphans.add(Long.parseLong(mapping.localId()));
-                    log.warn("Deleted dead mapping: localId={} was mapped to deleted Odoo id={}", mapping.localId(), odooId);
+                Long owner = mappingIdByOdooId.get(target);
+                if (owner != null && owner != mapping.id()) {
+                    conflicts++;
+                    changes.add(new RepairChange(localId, current, target, "CONFLICT_TARGET_USED"));
+                    continue;
                 }
+                if (!dryRun) mappingRepo.updateExternalId(mapping.id(), target);
+                mappingIdByOdooId.remove(current);
+                mappingIdByOdooId.put(target, mapping.id());
+                remapped++;
+                changes.add(new RepairChange(localId, current, target, "REMAPPED"));
             }
         }
 
-        log.info("Odoo mapping repair done: valid={}, remapped={}, deadDeleted={}, orphans={}", valid, remapped, deadDeleted, orphans.size());
-        return new RepairResult(valid, remapped, deadDeleted, orphans);
+        log.info("Odoo mapping repair{}: valid={}, remapped={}, deadDeleted={}, conflicts={}",
+            dryRun ? " (dry run)" : "", valid, remapped, deadDeleted, conflicts);
+        return new RepairResult(dryRun, valid, remapped, deadDeleted, conflicts, orphans, changes);
+    }
+
+    // Includes archived variants so an archived Odoo product is not mistaken for a deleted one.
+    private List<JsonNode> searchVariants(ExternalSystem sys, List<Object> condition) {
+        return odooClient.searchRead(sys.baseUrl(), sys.apiKey(), sys.username(),
+            "product.product",
+            List.of(condition, List.of("active", "in", List.of(true, false))),
+            List.of("id", "barcode", "product_tmpl_id"),
+            1000, 0);
+    }
+
+    private static Long placeholderTemplateId(String barcode) {
+        if (!barcode.startsWith("ODOO_")) return null;
+        try {
+            return Long.parseLong(barcode.substring(5));
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     private String findPrimaryBarcode(long localProductId) {
@@ -400,7 +494,11 @@ public class OdooCatalogService {
     private List<Object> buildProductDomain(Instant since) {
         List<Object> domain = new ArrayList<>();
         if (since != null) {
-            domain.add(List.of("write_date", ">", ODOO_TS.format(since)));
+            // Name and price live on the template, so template edits must also count as changes.
+            String ts = ODOO_TS.format(since);
+            domain.add("|");
+            domain.add(List.of("write_date", ">", ts));
+            domain.add(List.of("product_tmpl_id.write_date", ">", ts));
         }
         return domain;
     }

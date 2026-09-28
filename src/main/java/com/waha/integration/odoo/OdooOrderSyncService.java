@@ -303,7 +303,12 @@ public class OdooOrderSyncService {
                     String productName = lineNode.path("name").path("en").asText(null);
                     try {
                         List<Long> found = List.of();
-                        if (barcode != null && !barcode.isBlank()) {
+                        if (barcode != null && barcode.matches("ODOO_\\d+")) {
+                            // Placeholder barcode from the catalog pull: ODOO_<template id>.
+                            found = odooClient.search(sys.baseUrl(), sys.apiKey(), sys.username(),
+                                "product.product",
+                                List.of(List.of("product_tmpl_id", "=", Long.parseLong(barcode.substring(5)))));
+                        } else if (barcode != null && !barcode.isBlank()) {
                             found = odooClient.search(sys.baseUrl(), sys.apiKey(), sys.username(),
                                 "product.product",
                                 List.of(List.of("barcode", "=", barcode.trim())));

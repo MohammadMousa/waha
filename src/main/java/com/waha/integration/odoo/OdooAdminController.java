@@ -218,7 +218,8 @@ public class OdooAdminController {
     // where possible, deletes dead mappings, and returns orphaned local product IDs.
     @PostMapping("/mappings/repair")
     public ResponseEntity<?> repairMappings(
-            @RequestHeader(value = "Authorization", required = false) String auth) {
+            @RequestHeader(value = "Authorization", required = false) String auth,
+            @RequestParam(defaultValue = "false") boolean dryRun) {
         try {
             com.waha.auth.UserSession session = sessionService.requireSession(auth);
             sessionService.requirePermissionForOrg(auth, Permission.MANAGE_STORES, session.organizationId());
@@ -229,8 +230,11 @@ public class OdooAdminController {
         }
 
         try {
-            OdooCatalogService.RepairResult result = catalogService.repairMappings();
+            OdooCatalogService.RepairResult result = catalogService.repairMappings(dryRun);
             Map<String, Object> body = new java.util.HashMap<>();
+            body.put("dryRun",              result.dryRun());
+            body.put("conflicts",           result.conflicts());
+            body.put("changes",             result.changes());
             body.put("valid",               result.valid());
             body.put("remapped",            result.remapped());
             body.put("deadDeleted",         result.deadDeleted());

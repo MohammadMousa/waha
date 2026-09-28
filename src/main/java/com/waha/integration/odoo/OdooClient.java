@@ -175,6 +175,8 @@ public class OdooClient {
                     sb.append("<value>").append(scalarToXml(part)).append("</value>");
                 }
                 sb.append("</data></array></value>");
+            } else if (item instanceof String op) {
+                sb.append("<value>").append(str(op)).append("</value>");
             }
         }
         sb.append("</data></array>");
