@@ -158,4 +158,15 @@ public class ProductAdminController {
         resourceRepository.removeGalleryImage(id, resourceId);
         return ResponseEntity.ok().build();
     }
+
+    @DeleteMapping("/{id}")
+    public ResponseEntity<?> delete(
+            @RequestHeader(value = "Authorization", required = false) String auth,
+            @PathVariable long id) {
+        Optional<Product> opt = productRepository.findById(id);
+        if (opt.isEmpty()) return ResponseEntity.status(404).body(new ErrorResponse("Product not found: " + id));
+        sessionService.requirePermissionForOrg(auth, Permission.EDIT_PRODUCTS, opt.get().companyId());
+        productRepository.deactivate(id);
+        return ResponseEntity.ok().build();
+    }
 }

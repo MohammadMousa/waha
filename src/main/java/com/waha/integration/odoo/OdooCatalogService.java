@@ -315,6 +315,75 @@ public class OdooCatalogService {
         );
     }
 
+    // ── Mapping repair ────────────────────────────────────────────────────────
+
+    public record RepairResult(int valid, int remapped, int deadDeleted, List<Long> orphanedProductIds) {}
+
+    // Walks all PRODUCT mappings, verifies each against Odoo in batches of 50.
+    // Stale IDs are re-anchored by barcode when possible, otherwise deleted.
+    // Local products whose mapping was deleted (no barcode match) are returned as orphans.
+    public RepairResult repairMappings() {
+        ExternalSystem sys = requireSystem();
+        List<ExternalMapping> all = mappingRepo.findAllByEntityType(sys.id(), "PRODUCT");
+
+        int valid = 0, remapped = 0, deadDeleted = 0;
+        List<Long> orphans = new ArrayList<>();
+        final int BATCH = 50;
+
+        for (int i = 0; i < all.size(); i += BATCH) {
+            List<ExternalMapping> batch = all.subList(i, Math.min(i + BATCH, all.size()));
+
+            List<Long> batchOdooIds = batch.stream()
+                .map(m -> Long.parseLong(m.externalId()))
+                .collect(java.util.stream.Collectors.toList());
+
+            List<Long> stillExist = odooClient.search(sys.baseUrl(), sys.apiKey(), sys.username(),
+                "product.template",
+                List.of(List.of("id", "in", batchOdooIds)));
+            java.util.Set<Long> existSet = new java.util.HashSet<>(stillExist);
+
+            for (ExternalMapping mapping : batch) {
+                long odooId = Long.parseLong(mapping.externalId());
+                if (existSet.contains(odooId)) {
+                    valid++;
+                    continue;
+                }
+
+                // Odoo product gone — try to remap by barcode
+                String barcode = findPrimaryBarcode(Long.parseLong(mapping.localId()));
+                boolean fixed = false;
+                if (barcode != null && !barcode.startsWith("ODOO_")) {
+                    List<Long> byBarcode = odooClient.search(sys.baseUrl(), sys.apiKey(), sys.username(),
+                        "product.template",
+                        List.of(List.of("barcode", "=", barcode)));
+                    if (!byBarcode.isEmpty()) {
+                        mappingRepo.updateExternalId(mapping.id(), String.valueOf(byBarcode.get(0)));
+                        remapped++;
+                        fixed = true;
+                        log.info("Remapped product localId={} from Odoo {} to {}", mapping.localId(), odooId, byBarcode.get(0));
+                    }
+                }
+
+                if (!fixed) {
+                    mappingRepo.deleteById(mapping.id());
+                    deadDeleted++;
+                    orphans.add(Long.parseLong(mapping.localId()));
+                    log.warn("Deleted dead mapping: localId={} was mapped to deleted Odoo id={}", mapping.localId(), odooId);
+                }
+            }
+        }
+
+        log.info("Odoo mapping repair done: valid={}, remapped={}, deadDeleted={}, orphans={}", valid, remapped, deadDeleted, orphans.size());
+        return new RepairResult(valid, remapped, deadDeleted, orphans);
+    }
+
+    private String findPrimaryBarcode(long localProductId) {
+        List<String> rows = jdbc.getJdbcTemplate().query(
+            "SELECT barcode FROM product_barcodes WHERE product_id = ? AND is_primary = 1 LIMIT 1",
+            (rs, i) -> rs.getString(1), localProductId);
+        return rows.isEmpty() ? null : rows.get(0);
+    }
+
     // ── Helpers ───────────────────────────────────────────────────────────────
 
     private ExternalSystem requireSystem() {

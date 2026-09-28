@@ -213,6 +213,34 @@ public class OdooAdminController {
         }
     }
 
+    // ── POST /api/admin/odoo/mappings/repair ─────────────────────────────────
+    // Walks all PRODUCT mappings, verifies each against Odoo, remaps by barcode
+    // where possible, deletes dead mappings, and returns orphaned local product IDs.
+    @PostMapping("/mappings/repair")
+    public ResponseEntity<?> repairMappings(
+            @RequestHeader(value = "Authorization", required = false) String auth) {
+        try {
+            com.waha.auth.UserSession session = sessionService.requireSession(auth);
+            sessionService.requirePermissionForOrg(auth, Permission.MANAGE_STORES, session.organizationId());
+        } catch (UnauthorizedException e) {
+            return ResponseEntity.status(401).body(new ErrorResponse(e.getMessage()));
+        } catch (ForbiddenException e) {
+            return ResponseEntity.status(403).body(new ErrorResponse(e.getMessage()));
+        }
+
+        try {
+            OdooCatalogService.RepairResult result = catalogService.repairMappings();
+            Map<String, Object> body = new java.util.HashMap<>();
+            body.put("valid",               result.valid());
+            body.put("remapped",            result.remapped());
+            body.put("deadDeleted",         result.deadDeleted());
+            body.put("orphanedProductIds",  result.orphanedProductIds());
+            return ResponseEntity.ok(body);
+        } catch (OdooException e) {
+            return ResponseEntity.status(502).body(new ErrorResponse("Odoo error: " + e.getMessage()));
+        }
+    }
+
     // ── POST /api/admin/odoo/push/orders ──────────────────────────────────────
     @PostMapping("/push/orders")
     public ResponseEntity<?> pushOrders(

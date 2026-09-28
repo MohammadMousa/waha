@@ -115,6 +115,13 @@ public class ProductRepository {
         }
     }
 
+    public boolean deactivate(long id) {
+        int rows = jdbc.update(
+            "UPDATE products SET active = FALSE, `public` = FALSE, updated_at = NOW() WHERE id = :id",
+            Map.of("id", id));
+        return rows > 0;
+    }
+
     public void patch(long id, com.fasterxml.jackson.databind.JsonNode body) {
         List<String> setClauses = new ArrayList<>();
         List<Object> params = new ArrayList<>();

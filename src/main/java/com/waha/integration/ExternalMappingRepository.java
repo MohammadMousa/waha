@@ -40,6 +40,24 @@ public class ExternalMappingRepository {
         return rows.stream().findFirst();
     }
 
+    public List<ExternalMapping> findAllByEntityType(long systemId, String entityType) {
+        return jdbc.query(
+            "SELECT id, system_id, entity_type, local_id, external_id, store_id, created_at, updated_at " +
+            "FROM external_mappings WHERE system_id = :sid AND entity_type = :type",
+            Map.of("sid", systemId, "type", entityType),
+            (rs, i) -> map(rs)
+        );
+    }
+
+    public void deleteById(long id) {
+        jdbc.update("DELETE FROM external_mappings WHERE id = :id", Map.of("id", id));
+    }
+
+    public void updateExternalId(long id, String newExternalId) {
+        jdbc.update("UPDATE external_mappings SET external_id = :eid, updated_at = NOW() WHERE id = :id",
+            Map.of("id", id, "eid", newExternalId));
+    }
+
     public void save(long systemId, String entityType, String localId, String externalId, Long storeId) {
         Map<String, Object> params = new HashMap<>();
         params.put("sid",    systemId);

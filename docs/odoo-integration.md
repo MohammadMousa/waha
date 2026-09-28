@@ -226,8 +226,12 @@ All endpoints require `MANAGE_STORES` permission.
 | `GET`  | `/api/admin/odoo/status` | Connection status, last sync times, queue stats |
 | `POST` | `/api/admin/odoo/configure` | Save/update connection credentials |
 | `POST` | `/api/admin/odoo/pull/categories` | Pull categories from Odoo |
-| `POST` | `/api/admin/odoo/pull/products` | Pull products from Odoo |
+| `POST` | `/api/admin/odoo/pull/products` | Pull products from Odoo (delta — changes since last sync) |
+| `POST` | `/api/admin/odoo/pull/products/full` | Force full re-pull from Odoo, ignoring last sync timestamp |
+| `POST` | `/api/admin/odoo/mappings/repair` | Repair stale product mappings (see appendix) |
 | `POST` | `/api/admin/odoo/push/orders` | Push pending orders to Odoo now |
+| `POST` | `/api/admin/odoo/sync/{id}/queue` | Reset a single failed order back to PENDING |
+| `POST` | `/api/admin/odoo/sync/{id}/push` | Reset a single failed order and push it immediately |
 
 ---
 
@@ -239,3 +243,54 @@ All endpoints require `MANAGE_STORES` permission.
 - **No order status sync.** Waha pushes orders to Odoo but does not poll Odoo for status updates (confirmed, shipped, invoiced, etc.). Odoo is treated as a write-only sink for orders.
 - **No customer mapping.** All pushed orders use the API user's own partner as `partner_id`. Customer identity (name, phone) is not yet sent to Odoo.
 - **XML-RPC parser is hand-rolled.** The `OdooClient` parser handles the common scalar types and Many2one fields (returns the ID, not the name). Complex nested types (One2many, Many2many) are not parsed — if new Odoo fields return those types, the field will be null in the parsed result.
+
+---
+
+## Appendix: Mapping repair
+
+### Problem
+
+Product mappings break when the Odoo account is switched. The sequence:
+
+1. Connect to Odoo account **X** → pull → local products created, each mapped to account X's product IDs
+2. Switch to Odoo account **Y** → pull again → new local products created for Y's IDs, but old X mappings remain
+3. When an order is pushed, Waha resolves the product's Odoo ID from the mapping and sends it to account Y — but account Y has no record with that ID → Odoo returns **"Record does not exist or has been deleted"**
+
+The same problem occurs when products are deleted and re-created inside the same Odoo account (new IDs).
+
+### Solution: `POST /api/admin/odoo/mappings/repair`
+
+Walks every existing PRODUCT mapping and verifies it is still alive in Odoo. Processes in batches of 50 (one Odoo `search` call per batch).
+
+**For each mapping:**
+- Odoo ID still exists → **valid**, leave unchanged
+- Odoo ID gone, product has a real barcode → search Odoo by barcode → if found, **remap** to new Odoo ID
+- Odoo ID gone, no barcode match → **delete mapping**, add local product ID to orphan list
+
+**Response:**
+```json
+{
+  "valid": 112,
+  "remapped": 14,
+  "deadDeleted": 5,
+  "orphanedProductIds": [23, 47, 91, 103, 210]
+}
+```
+
+`orphanedProductIds` are local products whose mapping was deleted and could not be re-anchored. They still exist in Waha's catalog but will fail to push in future orders. The admin should either:
+- Delete them from Waha's product list if they no longer exist in Odoo
+- Keep them as local-only products (they won't sync to Odoo until manually remapped)
+
+### When to run
+
+- After switching the connected Odoo account
+- After bulk-deleting and re-creating products in Odoo
+- When orders start failing with "Record does not exist" errors on the sync log screen
+
+### Relation to full re-pull
+
+Repair and full re-pull are complementary:
+- **Repair** fixes broken mappings for products that already exist locally
+- **Full re-pull** brings in new Odoo products that were never pulled
+
+Run repair first, then full re-pull to catch any new products added in the new account.
