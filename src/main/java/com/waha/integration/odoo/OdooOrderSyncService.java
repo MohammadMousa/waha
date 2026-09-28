@@ -116,6 +116,43 @@ public class OdooOrderSyncService {
         cachedOverridePartnerId = null;
     }
 
+    // Pushes a single sync_queue item immediately. The caller must have already
+    // reset the row to PENDING before calling this (e.g. via SyncQueueRepository.resetOne).
+    // Marks the row DONE or FAILED and returns the final status.
+    public record PushResult(String status, String error) {}
+
+    public PushResult pushNow(long syncQueueId) {
+        Optional<ExternalSystem> sysOpt = systemRepo.findByName(SYSTEM_NAME);
+        if (sysOpt.isEmpty() || !sysOpt.get().enabled()) {
+            return new PushResult("FAILED", "Odoo integration is not enabled");
+        }
+        var itemOpt = queueRepo.findById(syncQueueId);
+        if (itemOpt.isEmpty()) {
+            return new PushResult("FAILED", "Sync queue item not found");
+        }
+        SyncQueueItem item = itemOpt.get();
+        ExternalSystem sys = sysOpt.get();
+        try {
+            if ("ORDER".equals(item.entityType()) && "CREATE".equals(item.operation())) {
+                pushOrder(sys, item);
+                queueRepo.markDone(item.id());
+                log.info("Pushed order {} to Odoo (manual retry)", item.entityId());
+                return new PushResult("DONE", null);
+            } else {
+                queueRepo.markFailed(item.id(), "Unknown operation");
+                return new PushResult("FAILED", "Unknown operation: " + item.entityType() + "/" + item.operation());
+            }
+        } catch (OdooException e) {
+            queueRepo.markFailed(item.id(), e.getMessage());
+            log.warn("Manual push failed for queue item {}: {}", item.id(), e.getMessage());
+            return new PushResult("FAILED", e.getMessage());
+        } catch (Exception e) {
+            queueRepo.markFailed(item.id(), e.getMessage());
+            log.error("Unexpected error on manual push for queue item {}: {}", item.id(), e.getMessage());
+            return new PushResult("FAILED", e.getMessage());
+        }
+    }
+
     // Resolution order (per Odoo Customers spec):
     //   1. Deployment-level customer override → one shared Odoo partner for all orders
     //   2. Per-identity mapping → Waha username → Odoo partner (find by email/name, create if missing)
@@ -260,6 +297,37 @@ public class OdooOrderSyncService {
                 Map<String, Object> line = new HashMap<>();
                 if (productMap.isPresent()) {
                     line.put("product_id", Long.parseLong(productMap.get().externalId()));
+                } else {
+                    // No cached mapping — search Odoo by barcode first, name as fallback.
+                    String barcode     = lineNode.path("barcode").asText(null);
+                    String productName = lineNode.path("name").path("en").asText(null);
+                    try {
+                        List<Long> found = List.of();
+                        if (barcode != null && !barcode.isBlank()) {
+                            found = odooClient.search(sys.baseUrl(), sys.apiKey(), sys.username(),
+                                "product.product",
+                                List.of(List.of("barcode", "=", barcode.trim())));
+                        }
+                        if (found.isEmpty() && productName != null && !productName.isBlank()) {
+                            found = odooClient.search(sys.baseUrl(), sys.apiKey(), sys.username(),
+                                "product.product",
+                                List.of(List.of("name", "=", productName.trim())));
+                        }
+                        if (!found.isEmpty()) {
+                            long odooProductId = found.get(0);
+                            mappingRepo.save(sys.id(), "PRODUCT", String.valueOf(localProductId),
+                                String.valueOf(odooProductId), item.storeId());
+                            line.put("product_id", odooProductId);
+                            log.info("Resolved product_id={} for barcode='{}' name='{}' on-the-fly",
+                                odooProductId, barcode, productName);
+                        } else {
+                            log.warn("Product barcode='{}' name='{}' (id={}) not found in Odoo — line sent without product_id",
+                                barcode, productName, localProductId);
+                        }
+                    } catch (Exception e) {
+                        log.warn("Could not resolve Odoo product barcode='{}' name='{}': {}",
+                            barcode, productName, e.getMessage());
+                    }
                 }
                 line.put("product_uom_qty", lineNode.path("quantity").asInt());
                 line.put("price_unit",      lineNode.path("unitPrice").asDouble());

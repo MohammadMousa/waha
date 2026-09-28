@@ -155,18 +155,17 @@ public class StoreRepository {
     }
 
     // organizationId is always the company (for now: 1). branchGroupId is optional.
-    public long createStore(String name, String displayName, String currency, Long branchGroupId) {
+    public long createStore(String name, String displayName, Long branchGroupId) {
         KeyHolder kh = new GeneratedKeyHolder();
         jdbcTemplate.update(con -> {
             PreparedStatement ps = con.prepareStatement(
-                "INSERT INTO stores (name, display_name, currency, organization_id, branch_group_id, active, `public`)" +
-                " VALUES (?, ?, ?, 1, ?, TRUE, FALSE)",
+                "INSERT INTO stores (name, display_name, currency, vat_rate, organization_id, branch_group_id, active, `public`)" +
+                " SELECT ?, ?, o.currency, o.vat_rate, o.id, ?, TRUE, FALSE FROM organizations o WHERE o.id = 1",
                 Statement.RETURN_GENERATED_KEYS
             );
             ps.setString(1, name);
             ps.setString(2, displayName);
-            ps.setString(3, currency);
-            if (branchGroupId != null) ps.setLong(4, branchGroupId); else ps.setNull(4, Types.BIGINT);
+            if (branchGroupId != null) ps.setLong(3, branchGroupId); else ps.setNull(3, Types.BIGINT);
             return ps;
         }, kh);
         return kh.getKey().longValue();

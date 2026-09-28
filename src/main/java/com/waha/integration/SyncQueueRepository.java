@@ -96,4 +96,39 @@ public class SyncQueueRepository {
             Map.of("sid", systemId, "type", entityType)
         );
     }
+
+    public java.util.Optional<SyncQueueItem> findById(long id) {
+        List<SyncQueueItem> rows = jdbc.query(
+            "SELECT id, system_id, entity_type, entity_id, operation, payload, status, " +
+            "       attempts, last_error, store_id, created_at, updated_at " +
+            "FROM sync_queue WHERE id = :id",
+            Map.of("id", id),
+            (rs, i) -> {
+                long sv = rs.getLong("store_id");
+                Long storeId = rs.wasNull() ? null : sv;
+                java.sql.Timestamp ca = rs.getTimestamp("created_at");
+                java.sql.Timestamp ua = rs.getTimestamp("updated_at");
+                return new SyncQueueItem(
+                    rs.getLong("id"), rs.getLong("system_id"),
+                    rs.getString("entity_type"), rs.getString("entity_id"),
+                    rs.getString("operation"), rs.getString("payload"),
+                    rs.getString("status"), rs.getInt("attempts"),
+                    rs.getString("last_error"), storeId,
+                    ca == null ? null : ca.toInstant(),
+                    ua == null ? null : ua.toInstant()
+                );
+            }
+        );
+        return rows.isEmpty() ? java.util.Optional.empty() : java.util.Optional.of(rows.get(0));
+    }
+
+    /** Resets a single FAILED row back to PENDING. Returns true if the row existed and was FAILED. */
+    public boolean resetOne(long id) {
+        int updated = jdbc.update(
+            "UPDATE sync_queue SET status = 'PENDING', attempts = 0, last_error = NULL, updated_at = NOW() " +
+            "WHERE id = :id AND status = 'FAILED'",
+            Map.of("id", id)
+        );
+        return updated > 0;
+    }
 }

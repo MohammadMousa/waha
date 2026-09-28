@@ -83,15 +83,19 @@ public class ExternalSystemRepository {
         return jdbc.queryForObject(
             "SELECT " +
             "  SUM(status = 'PENDING') AS pending, " +
+            "  SUM(status = 'PENDING' AND (attempts = 0 OR updated_at <= NOW() - INTERVAL (30 * POW(2, attempts)) SECOND)) AS ready, " +
             "  SUM(status = 'FAILED')  AS failed, " +
             "  SUM(status = 'DONE')    AS done " +
-            "FROM sync_queue WHERE system_id = :sid",
+            "FROM sync_queue WHERE system_id = :sid AND entity_type = 'ORDER'",
             Map.of("sid", systemId),
-            (rs, i) -> Map.of(
-                "pending", rs.getInt("pending"),
-                "failed",  rs.getInt("failed"),
-                "done",    rs.getInt("done")
-            )
+            (rs, i) -> {
+                Map<String, Integer> m = new java.util.LinkedHashMap<>();
+                m.put("pending", rs.getInt("pending"));
+                m.put("ready",   rs.getInt("ready"));
+                m.put("failed",  rs.getInt("failed"));
+                m.put("done",    rs.getInt("done"));
+                return m;
+            }
         );
     }
 

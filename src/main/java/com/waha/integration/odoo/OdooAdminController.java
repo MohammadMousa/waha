@@ -7,6 +7,7 @@ import com.waha.common.ForbiddenException;
 import com.waha.common.UnauthorizedException;
 import com.waha.integration.ExternalSystem;
 import com.waha.integration.ExternalSystemRepository;
+import com.waha.integration.SyncQueueRepository;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 
@@ -21,17 +22,20 @@ public class OdooAdminController {
     private final OdooCatalogService catalogService;
     private final OdooOrderSyncService orderSyncService;
     private final OdooSyncJob syncJob;
+    private final SyncQueueRepository syncQueueRepo;
     private final SessionService sessionService;
 
     public OdooAdminController(ExternalSystemRepository systemRepo,
                                 OdooCatalogService catalogService,
                                 OdooOrderSyncService orderSyncService,
                                 OdooSyncJob syncJob,
+                                SyncQueueRepository syncQueueRepo,
                                 SessionService sessionService) {
         this.systemRepo       = systemRepo;
         this.catalogService   = catalogService;
         this.orderSyncService = orderSyncService;
         this.syncJob          = syncJob;
+        this.syncQueueRepo    = syncQueueRepo;
         this.sessionService   = sessionService;
     }
 
@@ -200,5 +204,53 @@ public class OdooAdminController {
         } catch (Exception e) {
             return ResponseEntity.status(502).body(new ErrorResponse("Odoo error: " + e.getMessage()));
         }
+    }
+
+    // ── POST /api/admin/odoo/sync/{id}/queue ──────────────────────────────────
+    // Resets a single FAILED order back to PENDING so the background cycle picks it up.
+    @PostMapping("/sync/{id}/queue")
+    public ResponseEntity<?> queueOne(
+            @RequestHeader(value = "Authorization", required = false) String auth,
+            @PathVariable long id) {
+        try {
+            com.waha.auth.UserSession session = sessionService.requireSession(auth);
+            sessionService.requirePermissionForOrg(auth, Permission.MANAGE_STORES, session.organizationId());
+        } catch (UnauthorizedException e) {
+            return ResponseEntity.status(401).body(new ErrorResponse(e.getMessage()));
+        } catch (ForbiddenException e) {
+            return ResponseEntity.status(403).body(new ErrorResponse(e.getMessage()));
+        }
+        boolean reset = syncQueueRepo.resetOne(id);
+        if (!reset) {
+            return ResponseEntity.status(400).body(new ErrorResponse("Item not found or not in FAILED status"));
+        }
+        return ResponseEntity.ok(Map.of("id", id, "status", "PENDING"));
+    }
+
+    // ── POST /api/admin/odoo/sync/{id}/push ───────────────────────────────────
+    // Resets a single FAILED order and immediately pushes it to Odoo.
+    @PostMapping("/sync/{id}/push")
+    public ResponseEntity<?> pushOne(
+            @RequestHeader(value = "Authorization", required = false) String auth,
+            @PathVariable long id) {
+        try {
+            com.waha.auth.UserSession session = sessionService.requireSession(auth);
+            sessionService.requirePermissionForOrg(auth, Permission.MANAGE_STORES, session.organizationId());
+        } catch (UnauthorizedException e) {
+            return ResponseEntity.status(401).body(new ErrorResponse(e.getMessage()));
+        } catch (ForbiddenException e) {
+            return ResponseEntity.status(403).body(new ErrorResponse(e.getMessage()));
+        }
+        boolean reset = syncQueueRepo.resetOne(id);
+        if (!reset) {
+            return ResponseEntity.status(400).body(new ErrorResponse("Item not found or not in FAILED status"));
+        }
+        OdooOrderSyncService.PushResult result = orderSyncService.pushNow(id);
+        Map<String, Object> body = new java.util.HashMap<>();
+        body.put("id",     id);
+        body.put("status", result.status());
+        if (result.error() != null) body.put("error", result.error());
+        int httpStatus = "DONE".equals(result.status()) ? 200 : 502;
+        return ResponseEntity.status(httpStatus).body(body);
     }
 }

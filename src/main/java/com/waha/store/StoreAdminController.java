@@ -40,12 +40,9 @@ public class StoreAdminController {
             ? body.get("branchGroupId").asLong() : null;
 
         String displayName = body.has("displayName") ? body.get("displayName").toString() : null;
-        String currency = body.has("currency") && !body.get("currency").asText().isBlank()
-            ? body.get("currency").asText().trim().toUpperCase()
-            : null;
 
         try {
-            long id = storeRepository.createStore(name, displayName, currency, branchGroupId);
+            long id = storeRepository.createStore(name, displayName, branchGroupId);
             return ResponseEntity.ok(Map.of("id", id));
         } catch (Exception e) {
             String msg = e.getMessage();
