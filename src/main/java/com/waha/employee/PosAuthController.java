@@ -127,6 +127,35 @@ public class PosAuthController {
         return req.getRemoteAddr();
     }
 
+    @GetMapping("/me")
+    public ResponseEntity<?> me(
+            @RequestHeader(value = "Authorization", required = false) String authHeader) {
+        var sessionOpt = sessionService.tryResolveSession(authHeader);
+        if (sessionOpt.isEmpty() || sessionOpt.get().employeeId() == null)
+            return ResponseEntity.status(401).body(new ErrorResponse("Invalid or expired token"));
+
+        long employeeId = sessionOpt.get().employeeId();
+        Set<String> permissions = sessionService.resolveEmployeePermissionsUnified(employeeId);
+        Map<String, Object> profile = employeeRepository.findProfileForSession(employeeId);
+
+        List<Map<String, Object>> storesMapped = employeeRepository.findStores(employeeId).stream().map(s -> {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("id",          s.get("id"));
+            m.put("name",        s.get("name"));
+            m.put("displayName", parseJsonName((String) s.get("display_name")));
+            return m;
+        }).toList();
+
+        Map<String, Object> resp = new LinkedHashMap<>();
+        resp.put("employeeId",     employeeId);
+        resp.put("organizationId", sessionOpt.get().organizationId());
+        resp.put("employeeName",   profile.getOrDefault("employeeName", null));
+        resp.put("roleName",       profile.getOrDefault("roleName", null));
+        resp.put("permissions",    permissions);
+        resp.put("stores",         storesMapped);
+        return ResponseEntity.ok(resp);
+    }
+
     @PostMapping("/logout")
     public ResponseEntity<?> logout(
             @RequestHeader(value = "Authorization", required = false) String authHeader) {
