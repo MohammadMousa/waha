@@ -87,4 +87,13 @@ public class SyncQueueRepository {
             Map.of("id", id, "err", lastError)
         );
     }
+
+    /** Resets FAILED entries of a given entity_type back to PENDING so they are retried. */
+    public int resetFailed(long systemId, String entityType) {
+        return jdbc.update(
+            "UPDATE sync_queue SET status = 'PENDING', attempts = 0, last_error = NULL, updated_at = NOW() " +
+            "WHERE system_id = :sid AND entity_type = :type AND status = 'FAILED'",
+            Map.of("sid", systemId, "type", entityType)
+        );
+    }
 }

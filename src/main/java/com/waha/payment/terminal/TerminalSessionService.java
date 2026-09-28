@@ -3,10 +3,12 @@ package com.waha.payment.terminal;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.waha.common.InvalidRequestException;
 import com.waha.order.OrderNotPayableException;
+import com.waha.order.OrderPaidEvent;
 import com.waha.order.OrderRepository;
 import com.waha.payment.PaymentSseRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Scheduled;
@@ -31,15 +33,18 @@ public class TerminalSessionService {
     private final OrderRepository orderRepository;
     private final PaymentSseRegistry sseRegistry;
     private final ObjectMapper objectMapper;
+    private final ApplicationEventPublisher eventPublisher;
 
     public TerminalSessionService(JdbcTemplate jdbc,
                                   OrderRepository orderRepository,
                                   PaymentSseRegistry sseRegistry,
-                                  ObjectMapper objectMapper) {
+                                  ObjectMapper objectMapper,
+                                  ApplicationEventPublisher eventPublisher) {
         this.jdbc = jdbc;
         this.orderRepository = orderRepository;
         this.sseRegistry = sseRegistry;
         this.objectMapper = objectMapper;
+        this.eventPublisher = eventPublisher;
     }
 
     // Creates a PENDING terminal attempt in payment_attempts.
@@ -127,9 +132,12 @@ public class TerminalSessionService {
 
         var info = orderRepository.getPaymentInfo(attempt.orderId());
         orderRepository.recordPayment(attempt.orderId(), "terminal", "PAID", id, authCode);
-        orderRepository.markPaid(attempt.orderId(), info.version(), id, "terminal");
+        boolean paid = orderRepository.markPaid(attempt.orderId(), info.version(), id, "terminal");
         sseRegistry.notifyPaid(attempt.orderId());
         log.info("Terminal confirmed — attempt={} order={}", id, attempt.orderId());
+        if (paid) {
+            eventPublisher.publishEvent(new OrderPaidEvent(attempt.orderId(), info.storeId(), info.currency()));
+        }
     }
 
     public void cancel(String id) {
