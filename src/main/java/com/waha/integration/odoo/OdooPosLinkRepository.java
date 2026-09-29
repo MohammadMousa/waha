@@ -12,6 +12,8 @@ public class OdooPosLinkRepository {
 
     public static final String BRANCH = "BRANCH";
     public static final String PAYMENT_METHOD = "PAYMENT_METHOD";
+    // Odoo POS sessions Waha opened: local_key = session id, odoo_id = point of sale id.
+    public static final String SESSION = "SESSION";
 
     public record PosLink(String linkType, String localKey, long odooId) {}
 
@@ -36,6 +38,13 @@ public class OdooPosLinkRepository {
             (rs, i) -> new PosLink(rs.getString(1), rs.getString(2), rs.getLong(3)));
     }
 
+    public List<String> findLocalKeys(long systemId, String linkType, long odooId) {
+        return jdbc.query(
+            "SELECT local_key FROM odoo_pos_links WHERE system_id = :sid AND link_type = :type AND odoo_id = :oid",
+            Map.of("sid", systemId, "type", linkType, "oid", odooId),
+            (rs, i) -> rs.getString(1));
+    }
+
     public List<Long> findOdooIds(long systemId, String linkType) {
         return jdbc.query(
             "SELECT DISTINCT odoo_id FROM odoo_pos_links WHERE system_id = :sid AND link_type = :type",
@@ -48,6 +57,10 @@ public class OdooPosLinkRepository {
             "INSERT INTO odoo_pos_links (system_id, link_type, local_key, odoo_id) VALUES (:sid, :type, :key, :oid) " +
             "ON DUPLICATE KEY UPDATE odoo_id = VALUES(odoo_id)",
             Map.of("sid", systemId, "type", linkType, "key", localKey, "oid", odooId));
+    }
+
+    public void deleteAll(long systemId) {
+        jdbc.update("DELETE FROM odoo_pos_links WHERE system_id = :sid", Map.of("sid", systemId));
     }
 
     public void delete(long systemId, String linkType, String localKey) {

@@ -50,6 +50,7 @@ public class OdooPosOrderService {
     private final ZoneId zone;
     private final Map<Long, Long> companyByConfig = new ConcurrentHashMap<>();
     private final java.util.Set<String> enabledMethods = ConcurrentHashMap.newKeySet();
+    private final java.util.Set<Long> existingConfigs = ConcurrentHashMap.newKeySet();
 
     public OdooPosOrderService(OdooClient odooClient, OdooPosLinkRepository links, StoreRepository stores,
                                @Value("${waha.odoo.pos-day-start:03:00}") String dayStart,
@@ -82,8 +83,7 @@ public class OdooPosOrderService {
     public long create(ExternalSystem sys, SyncQueueItem item, JsonNode order,
                        List<OdooOrderSyncService.ResolvedLine> lines, long partnerId, Long taxId) {
         long storeId = item.storeId() != null ? item.storeId() : order.path("storeId").asLong();
-        long configId = links.findOdooId(sys.id(), OdooPosLinkRepository.BRANCH, String.valueOf(storeId))
-            .orElseGet(() -> pointOfSaleForBranch(sys, storeId));
+        long configId = branchPointOfSale(sys, storeId);
         String payKey = order.path("paymentMethod").asText("");
         long paymentMethodId = links.findOdooId(sys.id(), OdooPosLinkRepository.PAYMENT_METHOD, payKey)
             .orElseGet(() -> cardPaymentMethod(sys));
@@ -135,32 +135,62 @@ public class OdooPosOrderService {
         return odooId;
     }
 
-    // No explicit link: the Odoo point of sale named like the branch (English name, else Arabic),
-    // created with Waha's kiosk settings when none exists.
-    private synchronized long pointOfSaleForBranch(ExternalSystem sys, long storeId) {
-        String name = branchName(storeId);
+    // The branch's point of sale is remembered by Odoo id, so renaming it in Odoo changes nothing.
+    // Only when that point of sale is gone (deleted or archived) is it looked up by name again.
+    private synchronized long branchPointOfSale(ExternalSystem sys, long storeId) {
+        String key = String.valueOf(storeId);
+        Optional<Long> linked = links.findOdooId(sys.id(), OdooPosLinkRepository.BRANCH, key);
+        if (linked.isPresent()) {
+            if (pointOfSaleExists(sys, linked.get())) return linked.get();
+            log.warn("Odoo point of sale {} for branch {} no longer exists; finding it again", linked.get(), storeId);
+            links.delete(sys.id(), OdooPosLinkRepository.BRANCH, key);
+        }
+        long id = pointOfSaleForBranch(sys, storeId);
+        if (!usedOutsideWaha(sys, id)) links.save(sys.id(), OdooPosLinkRepository.BRANCH, key, id);
+        return id;
+    }
+
+    private boolean pointOfSaleExists(ExternalSystem sys, long configId) {
+        if (existingConfigs.contains(configId)) return true;
+        boolean exists = !odooClient.search(sys.baseUrl(), sys.apiKey(), sys.username(), "pos.config",
+            List.of(List.of("id", "=", configId))).isEmpty();
+        if (exists) existingConfigs.add(configId);
+        return exists;
+    }
+
+    // The Odoo point of sale named like the branch ("Arabic - English", English, or Arabic),
+    // created as "Arabic - English" with Waha's kiosk settings when none exists.
+    private long pointOfSaleForBranch(ExternalSystem sys, long storeId) {
+        List<String> names = branchNames(storeId);
         List<Long> matches = new ArrayList<>();
-        for (JsonNode c : odooClient.searchRead(sys.baseUrl(), sys.apiKey(), sys.username(), "pos.config",
-                List.of(List.of("name", "ilike", name)), List.of("id", "name"), 50, 0)) {
-            if (c.path("name").asText().strip().equalsIgnoreCase(name)) matches.add(c.path("id").asLong());
+        for (String name : names) {
+            for (JsonNode c : odooClient.searchRead(sys.baseUrl(), sys.apiKey(), sys.username(), "pos.config",
+                    List.of(List.of("name", "ilike", name)), List.of("id", "name"), 50, 0)) {
+                long id = c.path("id").asLong();
+                if (c.path("name").asText().strip().equalsIgnoreCase(name) && !matches.contains(id)) matches.add(id);
+            }
         }
         for (Long id : matches) {
             if (!usedOutsideWaha(sys, id)) return id;
         }
         // A same-named point of sale that others use is returned so the order fails with a clear reason.
         if (!matches.isEmpty()) return matches.get(0);
-        return createPointOfSale(sys, name);
+        return createPointOfSale(sys, names.get(0));
     }
 
-    private String branchName(long storeId) {
+    // Preferred name first: "Arabic - English" when the branch has both, like the client's own points of sale.
+    private List<String> branchNames(long storeId) {
         StoreRepository.StoreAdminDetail store = stores.findByIdAdmin(storeId)
             .orElseThrow(() -> new OdooException("Branch " + storeId + " does not exist"));
         JsonNode names = store.displayName();
-        for (String lang : List.of("en", "ar")) {
-            String value = names == null ? "" : names.path(lang).asText("").strip();
-            if (!value.isEmpty()) return value;
-        }
-        return store.name();
+        String en = names == null ? "" : names.path("en").asText("").strip();
+        String ar = names == null ? "" : names.path("ar").asText("").strip();
+        List<String> out = new ArrayList<>();
+        if (!ar.isEmpty() && !en.isEmpty()) out.add(ar + " - " + en);
+        if (!en.isEmpty()) out.add(en);
+        if (!ar.isEmpty()) out.add(ar);
+        if (out.isEmpty()) out.add(store.name());
+        return out;
     }
 
     private long createPointOfSale(ExternalSystem sys, String name) {
@@ -199,6 +229,7 @@ public class OdooPosOrderService {
         cardMethodId = null;
         companyByConfig.clear();
         enabledMethods.clear();
+        existingConfigs.clear();
     }
 
     private long cardPaymentMethod(ExternalSystem sys) {
@@ -263,6 +294,7 @@ public class OdooPosOrderService {
         // Odoo names sessions from its own sequence; the WAHA/ name marks the session as Waha's.
         odooClient.write(sys.baseUrl(), sys.apiKey(), sys.username(), "pos.session", List.of(id),
             Map.of("name", SESSION_PREFIX + storeId + "/" + ODOO_TS.format(Instant.now())));
+        links.save(sys.id(), OdooPosLinkRepository.SESSION, String.valueOf(id), configId);
         finishOpening(sys, id);
         log.info("Opened Odoo POS session id={} for point of sale {}", id, configId);
         return id;
@@ -290,9 +322,14 @@ public class OdooPosOrderService {
     }
 
     // True when any session on this point of sale was not opened by Waha (cashiers, other kiosk systems).
+    // Waha's sessions are the ones it recorded, so renaming a session in Odoo changes nothing;
+    // the WAHA/ name still counts for sessions opened before recording started.
     private boolean usedOutsideWaha(ExternalSystem sys, long configId) {
+        List<Long> own = links.findLocalKeys(sys.id(), OdooPosLinkRepository.SESSION, configId).stream()
+            .map(Long::parseLong).toList();
         return !odooClient.search(sys.baseUrl(), sys.apiKey(), sys.username(), "pos.session",
-            List.of(List.of("config_id", "=", configId), List.of("name", "not like", SESSION_PREFIX))).isEmpty();
+            List.of(List.of("config_id", "=", configId), List.of("name", "not like", SESSION_PREFIX),
+                    List.of("id", "not in", own))).isEmpty();
     }
 
     private boolean startedBeforeBusinessDay(String startAtUtc) {

@@ -116,7 +116,10 @@ public class OdooAdminController {
         // The store that saves the integration becomes its owner (set once, never overwritten).
         // Ownership is at the organization level; use 1L (the company) for single-tenant
         Long ownerOrganizationId = 1L;
+        String previousUrl = systemRepo.findByName("ODOO").map(ExternalSystem::baseUrl).orElse(null);
         ExternalSystem sys = systemRepo.upsert("ODOO", request.baseUrl().strip(), apiKey, username, customerOverride, ownerOrganizationId);
+        // Remembered points of sale and sessions are Odoo ids of the old database.
+        if (previousUrl != null && !previousUrl.equalsIgnoreCase(sys.baseUrl())) posLinks.deleteAll(sys.id());
         if (pushTarget != null) systemRepo.updatePushTarget(sys.id(), pushTarget);
         // Reset cached partner so next order uses the new override.
         orderSyncService.resetPartnerCache();
@@ -374,7 +377,7 @@ public class OdooAdminController {
         for (OdooPosLinkRepository.PosLink l : posLinks.findAll(sys.get().id())) {
             if (OdooPosLinkRepository.BRANCH.equals(l.linkType())) {
                 branches.add(Map.of("storeId", Long.parseLong(l.localKey()), "posConfigId", l.odooId()));
-            } else {
+            } else if (OdooPosLinkRepository.PAYMENT_METHOD.equals(l.linkType())) {
                 methods.add(Map.of("paymentMethodKey", l.localKey(), "odooPaymentMethodId", l.odooId()));
             }
         }
