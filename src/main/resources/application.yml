@@ -6,9 +6,19 @@ spring:
   flyway:
     locations: filesystem:/flyway-sql/migrations,filesystem:/flyway-sql/stored-procs
     baseline-on-migrate: true
+  # Uploads are capped at 10 MB by the resource upload itself; Spring's own
+  # default (1 MB per file) would otherwise reject files well below that.
+  servlet:
+    multipart:
+      max-file-size: 11MB
+      max-request-size: 12MB
 
 server:
   port: 8080
+  tomcat:
+    # Lets an oversized upload be read to the end so the client gets the 413 message
+    # instead of a dropped connection.
+    max-swallow-size: 20MB
 
 waha:
   # Base URL this backend is reachable at, used to build the invoiceUrl
