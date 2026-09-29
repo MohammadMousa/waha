@@ -20,7 +20,7 @@ public class ExternalSystemRepository {
 
     public Optional<ExternalSystem> findByName(String name) {
         List<ExternalSystem> rows = jdbc.query(
-            "SELECT id, name, base_url, api_key, username, customer_override, owner_organization_id, enabled, " +
+            "SELECT id, name, base_url, api_key, username, customer_override, push_target, owner_organization_id, enabled, " +
             "last_category_sync_at, last_product_sync_at, created_at, updated_at " +
             "FROM external_systems WHERE name = :name",
             Map.of("name", name),
@@ -31,6 +31,7 @@ public class ExternalSystemRepository {
                 rs.getString("api_key"),
                 rs.getString("username"),
                 rs.getString("customer_override"),
+                rs.getString("push_target"),
                 rs.getObject("owner_organization_id", Long.class),
                 rs.getBoolean("enabled"),
                 toInstant(rs.getTimestamp("last_category_sync_at")),
@@ -63,6 +64,11 @@ public class ExternalSystemRepository {
             params
         );
         return findByName(name).orElseThrow();
+    }
+
+    public void updatePushTarget(long id, String pushTarget) {
+        jdbc.update("UPDATE external_systems SET push_target = :t WHERE id = :id",
+            Map.of("t", pushTarget, "id", id));
     }
 
     public void updateLastCategorySyncAt(long id, Instant time) {
@@ -116,12 +122,22 @@ public class ExternalSystemRepository {
         return kh.getKey().longValue();
     }
 
-    public void completeCatalogPullLog(long logId, int categoriesPulled, int productsPulled) {
-        String result = "Pulled " + categoriesPulled + " categories, " + productsPulled + " products";
+    public void completeCatalogPullLog(long logId, int categoriesPulled, int productsPulled,
+                                       int productsSkipped, Map<String, Integer> skipReasons) {
+        String result = "Pulled " + categoriesPulled + " categories, " + productsPulled + " products"
+            + (productsSkipped > 0 ? ", " + productsSkipped + " skipped" : "");
+        String reasonsJson;
+        try {
+            reasonsJson = new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(skipReasons);
+        } catch (Exception e) {
+            reasonsJson = "{}";
+        }
         jdbc.update(
             "UPDATE sync_queue SET status = 'DONE', attempts = attempts + 1, last_error = :result, " +
-            "payload = JSON_SET(payload, '$.categoriesPulled', :cats, '$.productsPulled', :prods) WHERE id = :id",
-            Map.of("id", logId, "result", result, "cats", categoriesPulled, "prods", productsPulled)
+            "payload = JSON_SET(payload, '$.categoriesPulled', :cats, '$.productsPulled', :prods, " +
+            "'$.productsSkipped', :skipped, '$.skipReasons', CAST(:reasons AS JSON)) WHERE id = :id",
+            Map.of("id", logId, "result", result, "cats", categoriesPulled, "prods", productsPulled,
+                   "skipped", productsSkipped, "reasons", reasonsJson)
         );
     }
 

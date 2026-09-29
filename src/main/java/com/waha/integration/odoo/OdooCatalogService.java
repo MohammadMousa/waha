@@ -60,8 +60,13 @@ public class OdooCatalogService {
     // ── Category pull ─────────────────────────────────────────────────────────
 
     public int pullCategories() {
+        return pullCategories(false);
+    }
+
+    // full=true ignores the last sync time and fetches every category.
+    private int pullCategories(boolean full) {
         ExternalSystem sys = requireSystem();
-        List<Object> domain = buildDomain(sys.lastCategorySyncAt());
+        List<Object> domain = full ? List.of() : buildDomain(sys.lastCategorySyncAt());
         List<JsonNode> rows = odooClient.searchRead(
             sys.baseUrl(), sys.apiKey(), sys.username(),
             "product.category", domain,
@@ -127,7 +132,16 @@ public class OdooCatalogService {
 
     // ── Product pull ──────────────────────────────────────────────────────────
 
-    public record FullPullResult(int added, int updated, int skipped, int total) {}
+    // skipReasons: reason text -> number of products skipped for it.
+    public record FullPullResult(int added, int updated, int skipped, int total, Map<String, Integer> skipReasons) {}
+
+    public record ProductPullResult(int processed, int skipped, Map<String, Integer> skipReasons) {}
+
+    private static String skipReason(Exception e) {
+        String msg = e.getMessage();
+        if (msg == null || msg.isBlank()) return e.getClass().getSimpleName();
+        return msg.length() > 120 ? msg.substring(0, 120) : msg;
+    }
 
     // Pulled from product.product (variants): sale order lines reference variant IDs,
     // so mappings must hold variant IDs, never template IDs.
@@ -135,11 +149,13 @@ public class OdooCatalogService {
         "id", "name", "description_sale", "lst_price", "categ_id", "barcode",
         "active", "write_date", "image_512", "product_tmpl_id");
 
-    public int pullProducts() {
+    public ProductPullResult pullProducts() {
         ExternalSystem sys = requireSystem();
         Instant since = sys.lastProductSyncAt();
 
         int total = 0;
+        int skipped = 0;
+        Map<String, Integer> reasons = new HashMap<>();
         int offset = 0;
         final int PAGE = 100;
 
@@ -159,7 +175,9 @@ public class OdooCatalogService {
                     upsertProduct(sys.id(), row);
                     total++;
                 } catch (Exception e) {
-                    log.warn("Skipping Odoo product id={}: {}", row.path("id").asLong(), e.getMessage());
+                    skipped++;
+                    reasons.merge(skipReason(e), 1, Integer::sum);
+                    log.warn("Skipping Odoo product id={}: {}", row.path("id").asLong(), skipReason(e));
                 }
             }
 
@@ -168,15 +186,31 @@ public class OdooCatalogService {
         }
 
         if (total > 0) systemRepo.updateLastProductSyncAt(sys.id(), Instant.now());
-        log.info("Odoo product pull: {} processed", total);
-        return total;
+        log.info("Odoo product pull: {} processed, {} skipped", total, skipped);
+        return new ProductPullResult(total, skipped, reasons);
     }
 
     // Full pull — ignores lastProductSyncAt and fetches all products from Odoo.
     // Returns a breakdown of what changed so the caller can report it.
     public FullPullResult fullPullProducts() {
         ExternalSystem sys = requireSystem();
+        long logId = systemRepo.insertCatalogPullLog(sys.id(), "FULL_PULL");
+        try {
+            // Categories first, so every product can be placed in its category.
+            int categories = pullCategories(true);
+            FullPullResult result = runFullPull(sys);
+            systemRepo.completeCatalogPullLog(logId, categories, result.added() + result.updated(),
+                result.skipped(), result.skipReasons());
+            return result;
+        } catch (RuntimeException e) {
+            systemRepo.failCatalogPullLog(logId, e.getMessage());
+            throw e;
+        }
+    }
+
+    private FullPullResult runFullPull(ExternalSystem sys) {
         int added = 0, updated = 0, skipped = 0;
+        Map<String, Integer> reasons = new HashMap<>();
         int offset = 0;
         final int PAGE = 100;
 
@@ -194,8 +228,9 @@ public class OdooCatalogService {
                     boolean isNew = upsertProduct(sys.id(), row);
                     if (isNew) added++; else updated++;
                 } catch (Exception e) {
-                    log.warn("Skipping Odoo product id={} during full pull: {}", row.path("id").asLong(), e.getMessage());
+                    log.warn("Skipping Odoo product id={} during full pull: {}", row.path("id").asLong(), skipReason(e));
                     skipped++;
+                    reasons.merge(skipReason(e), 1, Integer::sum);
                 }
             }
 
@@ -206,7 +241,7 @@ public class OdooCatalogService {
         int total = added + updated + skipped;
         systemRepo.updateLastProductSyncAt(sys.id(), Instant.now());
         log.info("Odoo full product pull: added={}, updated={}, skipped={}, total={}", added, updated, skipped, total);
-        return new FullPullResult(added, updated, skipped, total);
+        return new FullPullResult(added, updated, skipped, total, reasons);
     }
 
     private boolean upsertProduct(long systemId, JsonNode row) throws Exception {
@@ -342,11 +377,18 @@ public class OdooCatalogService {
         return productId;
     }
 
+    // A null categoryId (Odoo category not known to Waha) keeps the product's current category.
     private void updateProduct(long id, String nameJson, BigDecimal price, Long categoryId, boolean active) {
+        Map<String, Object> params = new HashMap<>();
+        params.put("id", id);
+        params.put("name", nameJson);
+        params.put("price", price);
+        params.put("categoryId", categoryId);
+        params.put("active", active);
         jdbc.update(
-            "UPDATE products SET name = :name, price = :price, category_id = :categoryId, " +
+            "UPDATE products SET name = :name, price = :price, category_id = COALESCE(:categoryId, category_id), " +
             "active = :active, updated_at = NOW() WHERE id = :id",
-            Map.of("id", id, "name", nameJson, "price", price, "categoryId", categoryId, "active", active)
+            params
         );
     }
 

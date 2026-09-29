@@ -35,6 +35,10 @@ public class OdooClient {
         }
     }
 
+    public int uid(String baseUrl, String apiKey, String username) {
+        return authenticate(baseUrl, username, apiKey);
+    }
+
     // Authenticates and returns uid. Throws OdooException on failure.
     private int authenticate(String baseUrl, String username, String apiKey) {
         String db  = dbFromUrl(baseUrl);
@@ -138,9 +142,12 @@ public class OdooClient {
         }
     }
 
+    // Keeps scheme and host only: admins often paste the browser address (e.g. https://x.odoo.com/odoo),
+    // but the XML-RPC endpoints live at the root.
     private String base(String url) {
-        String normalized = url.contains("://") ? url : "https://" + url;
-        return normalized.replaceAll("/+$", "");
+        String normalized = url.contains("://") ? url.strip() : "https://" + url.strip();
+        java.net.URI uri = java.net.URI.create(normalized);
+        return uri.getScheme() + "://" + uri.getAuthority();
     }
 
     private String param(String inner) {
@@ -224,14 +231,31 @@ public class OdooClient {
         return str(v.toString());
     }
 
+    public void write(String baseUrl, String apiKey, String username,
+                      String model, List<Long> ids, Map<String, Object> values) {
+        String argsXml = "<array><data><value>" + scalarToXml(ids) + "</value><value>"
+            + mapToXml(values) + "</value></data></array>";
+        executeKwRaw(baseUrl, apiKey, username, model, "write", argsXml, "<struct/>");
+    }
+
     // Calls a method on a list of record ids (e.g. action_confirm on a sale.order).
     public void callMethod(String baseUrl, String apiKey, String username,
                            String model, String method, List<Long> ids) {
-        StringBuilder idsXml = new StringBuilder("<array><data>");
-        for (Long id : ids) idsXml.append("<value><int>").append(id).append("</int></value>");
-        idsXml.append("</data></array>");
-        String argsXml = "<array><data><value>" + idsXml + "</value></data></array>";
-        executeKwRaw(baseUrl, apiKey, username, model, method, argsXml, "<struct/>");
+        callMethod(baseUrl, apiKey, username, model, method, ids, List.of());
+    }
+
+    // extraArgs are passed as positional arguments after the record ids.
+    public void callMethod(String baseUrl, String apiKey, String username,
+                           String model, String method, List<Long> ids, List<Object> extraArgs) {
+        StringBuilder argsXml = new StringBuilder("<array><data><value>").append(scalarToXml(ids)).append("</value>");
+        for (Object arg : extraArgs) argsXml.append("<value>").append(scalarToXml(arg)).append("</value>");
+        argsXml.append("</data></array>");
+        try {
+            executeKwRaw(baseUrl, apiKey, username, model, method, argsXml.toString(), "<struct/>");
+        } catch (OdooException e) {
+            // Methods that return None run fine, but Odoo's XML-RPC cannot send None back.
+            if (e.getMessage() == null || !e.getMessage().contains("cannot marshal None")) throw e;
+        }
     }
 
     // Looks up the Odoo partner_id for the given login (for use as sale.order partner).

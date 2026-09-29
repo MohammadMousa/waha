@@ -28,23 +28,25 @@ public class OdooSyncJob {
     public SyncResult runSync(ExternalSystem sys, String triggeredBy) {
         if (!sys.enabled()) {
             log.info("Odoo sync skipped — integration disabled");
-            return new SyncResult(0, 0, false, "Integration is disabled");
+            return new SyncResult(0, 0, 0, false, "Integration is disabled");
         }
         log.info("Odoo sync starting (system={}, trigger={})", sys.id(), triggeredBy);
         long logId = systemRepo.insertCatalogPullLog(sys.id(), triggeredBy);
-        int cats = 0, prods = 0;
+        int cats = 0, prods = 0, skipped = 0;
         try {
             cats  = catalogService.pullCategories();
-            prods = catalogService.pullProducts();
-            systemRepo.completeCatalogPullLog(logId, cats, prods);
+            OdooCatalogService.ProductPullResult products = catalogService.pullProducts();
+            prods = products.processed();
+            skipped = products.skipped();
+            systemRepo.completeCatalogPullLog(logId, cats, prods, skipped, products.skipReasons());
             log.info("Odoo sync completed — categories={} products={}", cats, prods);
-            return new SyncResult(cats, prods, true, null);
+            return new SyncResult(cats, prods, skipped, true, null);
         } catch (Exception e) {
             systemRepo.failCatalogPullLog(logId, e.getMessage());
             log.error("Odoo sync failed", e);
-            return new SyncResult(cats, prods, false, e.getMessage());
+            return new SyncResult(cats, prods, skipped, false, e.getMessage());
         }
     }
 
-    public record SyncResult(int categoriesPulled, int productsPulled, boolean success, String errorMessage) {}
+    public record SyncResult(int categoriesPulled, int productsPulled, int productsSkipped, boolean success, String errorMessage) {}
 }

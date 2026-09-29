@@ -40,7 +40,7 @@ public class SyncQueueRepository {
             "SELECT id, system_id, entity_type, entity_id, operation, payload, status, " +
             "       attempts, last_error, store_id, created_at, updated_at " +
             "FROM sync_queue " +
-            "WHERE status = 'PENDING' " +
+            "WHERE status = 'PENDING' AND entity_type = 'ORDER' " +
             "  AND (attempts = 0 OR updated_at <= NOW() - INTERVAL (30 * POW(2, attempts)) SECOND) " +
             "ORDER BY created_at LIMIT :lim",
             Map.of("lim", limit),
@@ -69,7 +69,7 @@ public class SyncQueueRepository {
 
     public void markDone(long id) {
         jdbc.update(
-            "UPDATE sync_queue SET status = 'DONE', updated_at = NOW() WHERE id = :id",
+            "UPDATE sync_queue SET status = 'DONE', last_error = NULL, updated_at = NOW() WHERE id = :id",
             Map.of("id", id)
         );
     }

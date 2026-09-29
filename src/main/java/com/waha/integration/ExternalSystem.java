@@ -9,6 +9,7 @@ public record ExternalSystem(
     String apiKey,
     String username,
     String customerOverride,
+    String pushTarget,
     Long ownerOrganizationId,
     boolean enabled,
     Instant lastCategorySyncAt,

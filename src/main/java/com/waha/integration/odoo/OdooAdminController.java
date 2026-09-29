@@ -24,19 +24,25 @@ public class OdooAdminController {
     private final OdooSyncJob syncJob;
     private final SyncQueueRepository syncQueueRepo;
     private final SessionService sessionService;
+    private final OdooPosOrderService posOrderService;
+    private final OdooPosLinkRepository posLinks;
 
     public OdooAdminController(ExternalSystemRepository systemRepo,
                                 OdooCatalogService catalogService,
                                 OdooOrderSyncService orderSyncService,
                                 OdooSyncJob syncJob,
                                 SyncQueueRepository syncQueueRepo,
-                                SessionService sessionService) {
+                                SessionService sessionService,
+                                OdooPosOrderService posOrderService,
+                                OdooPosLinkRepository posLinks) {
         this.systemRepo       = systemRepo;
         this.catalogService   = catalogService;
         this.orderSyncService = orderSyncService;
         this.syncJob          = syncJob;
         this.syncQueueRepo    = syncQueueRepo;
         this.sessionService   = sessionService;
+        this.posOrderService  = posOrderService;
+        this.posLinks         = posLinks;
     }
 
     // ── GET /api/admin/odoo/status ────────────────────────────────────────────
@@ -71,6 +77,7 @@ public class OdooAdminController {
         body.put("baseUrl",             s.baseUrl()            != null ? s.baseUrl()            : "");
         body.put("username",            s.username()           != null ? s.username()           : "");
         body.put("customerOverride",    s.customerOverride()   != null ? s.customerOverride()   : "");
+        body.put("pushTarget",          s.pushTarget());
         body.put("lastCategorySyncAt",  s.lastCategorySyncAt() != null ? s.lastCategorySyncAt().toString() : null);
         body.put("lastProductSyncAt",   s.lastProductSyncAt()  != null ? s.lastProductSyncAt().toString()  : null);
         body.put("queue",               queueStats);
@@ -78,7 +85,8 @@ public class OdooAdminController {
     }
 
     // ── POST /api/admin/odoo/configure ────────────────────────────────────────
-    record ConfigureRequest(String baseUrl, String apiKey, String username, String customerOverride) {}
+    // pushTarget: "SALES" or "POS"; omitted keeps the current value.
+    record ConfigureRequest(String baseUrl, String apiKey, String username, String customerOverride, String pushTarget) {}
 
     @PostMapping("/configure")
     public ResponseEntity<?> configure(
@@ -96,6 +104,11 @@ public class OdooAdminController {
         if (request.baseUrl() == null || request.baseUrl().isBlank()) {
             return ResponseEntity.status(400).body(new ErrorResponse("baseUrl is required"));
         }
+        String pushTarget = request.pushTarget() == null ? null : request.pushTarget().strip().toUpperCase();
+        if (pushTarget != null && !pushTarget.equals(OdooPosOrderService.TARGET_SALES)
+                && !pushTarget.equals(OdooPosOrderService.TARGET_POS)) {
+            return ResponseEntity.status(400).body(new ErrorResponse("pushTarget must be SALES or POS"));
+        }
 
         String apiKey           = request.apiKey()           != null && !request.apiKey().isBlank()           ? request.apiKey().strip()           : null;
         String username         = request.username()         != null && !request.username().isBlank()         ? request.username().strip()         : null;
@@ -104,9 +117,12 @@ public class OdooAdminController {
         // Ownership is at the organization level; use 1L (the company) for single-tenant
         Long ownerOrganizationId = 1L;
         ExternalSystem sys = systemRepo.upsert("ODOO", request.baseUrl().strip(), apiKey, username, customerOverride, ownerOrganizationId);
+        if (pushTarget != null) systemRepo.updatePushTarget(sys.id(), pushTarget);
         // Reset cached partner so next order uses the new override.
         orderSyncService.resetPartnerCache();
-        return ResponseEntity.ok(Map.of("id", sys.id(), "name", sys.name(), "enabled", sys.enabled()));
+        posOrderService.resetCaches();
+        return ResponseEntity.ok(Map.of("id", sys.id(), "name", sys.name(), "enabled", sys.enabled(),
+            "pushTarget", pushTarget != null ? pushTarget : sys.pushTarget()));
     }
 
     // Throws ForbiddenException if the current store is not the integration owner.
@@ -175,6 +191,7 @@ public class OdooAdminController {
             int visible = catalogService.countVisibleProducts(1L);
             Map<String, Object> body = new java.util.HashMap<>();
             body.put("pulled",     result.productsPulled());
+            body.put("skipped",    result.productsSkipped());
             body.put("visible",    visible);
             body.put("entityType", "PRODUCT");
             return ResponseEntity.ok(body);
@@ -206,6 +223,7 @@ public class OdooAdminController {
             body.put("added",   result.added());
             body.put("updated", result.updated());
             body.put("skipped", result.skipped());
+            body.put("skipReasons", result.skipReasons());
             body.put("total",   result.total());
             return ResponseEntity.ok(body);
         } catch (OdooException e) {
@@ -312,5 +330,93 @@ public class OdooAdminController {
         if (result.error() != null) body.put("error", result.error());
         int httpStatus = "DONE".equals(result.status()) ? 200 : 502;
         return ResponseEntity.status(httpStatus).body(body);
+    }
+
+    // ── POS push settings ─────────────────────────────────────────────────────
+
+    private ResponseEntity<?> requireOrgAdmin(String auth) {
+        try {
+            com.waha.auth.UserSession session = sessionService.requireSession(auth);
+            sessionService.requirePermissionForOrg(auth, Permission.MANAGE_STORES, session.organizationId());
+            return null;
+        } catch (UnauthorizedException e) {
+            return ResponseEntity.status(401).body(new ErrorResponse(e.getMessage()));
+        } catch (ForbiddenException e) {
+            return ResponseEntity.status(403).body(new ErrorResponse(e.getMessage()));
+        }
+    }
+
+    // GET /api/admin/odoo/pos/options — Odoo points of sale and payment methods to choose from.
+    @GetMapping("/pos/options")
+    public ResponseEntity<?> posOptions(@RequestHeader(value = "Authorization", required = false) String auth) {
+        ResponseEntity<?> denied = requireOrgAdmin(auth);
+        if (denied != null) return denied;
+        Optional<ExternalSystem> sys = systemRepo.findByName("ODOO");
+        if (sys.isEmpty()) return ResponseEntity.status(404).body(new ErrorResponse("Odoo is not configured"));
+        try {
+            return ResponseEntity.ok(Map.of(
+                "pointsOfSale",   posOrderService.listPointsOfSale(sys.get()),
+                "paymentMethods", posOrderService.listPaymentMethods(sys.get())));
+        } catch (OdooException e) {
+            return ResponseEntity.status(502).body(new ErrorResponse("Odoo error: " + e.getMessage()));
+        }
+    }
+
+    // GET /api/admin/odoo/pos/links — current branch and payment method choices.
+    @GetMapping("/pos/links")
+    public ResponseEntity<?> posLinks(@RequestHeader(value = "Authorization", required = false) String auth) {
+        ResponseEntity<?> denied = requireOrgAdmin(auth);
+        if (denied != null) return denied;
+        Optional<ExternalSystem> sys = systemRepo.findByName("ODOO");
+        if (sys.isEmpty()) return ResponseEntity.status(404).body(new ErrorResponse("Odoo is not configured"));
+        java.util.List<Map<String, Object>> branches = new java.util.ArrayList<>();
+        java.util.List<Map<String, Object>> methods  = new java.util.ArrayList<>();
+        for (OdooPosLinkRepository.PosLink l : posLinks.findAll(sys.get().id())) {
+            if (OdooPosLinkRepository.BRANCH.equals(l.linkType())) {
+                branches.add(Map.of("storeId", Long.parseLong(l.localKey()), "posConfigId", l.odooId()));
+            } else {
+                methods.add(Map.of("paymentMethodKey", l.localKey(), "odooPaymentMethodId", l.odooId()));
+            }
+        }
+        return ResponseEntity.ok(Map.of("branches", branches, "paymentMethods", methods));
+    }
+
+    record PosLinkRequest(Long odooId) {}
+
+    // PUT /api/admin/odoo/pos/links/branches/{storeId} — body {"odooId": <pos.config id>} or null to unset.
+    @PutMapping("/pos/links/branches/{storeId}")
+    public ResponseEntity<?> setBranchLink(@RequestHeader(value = "Authorization", required = false) String auth,
+                                           @PathVariable long storeId, @RequestBody PosLinkRequest request) {
+        return setLink(auth, OdooPosLinkRepository.BRANCH, String.valueOf(storeId), request);
+    }
+
+    // PUT /api/admin/odoo/pos/links/payment-methods/{key} — body {"odooId": <pos.payment.method id>} or null to unset.
+    @PutMapping("/pos/links/payment-methods/{key}")
+    public ResponseEntity<?> setPaymentMethodLink(@RequestHeader(value = "Authorization", required = false) String auth,
+                                                  @PathVariable String key, @RequestBody PosLinkRequest request) {
+        return setLink(auth, OdooPosLinkRepository.PAYMENT_METHOD, key, request);
+    }
+
+    private ResponseEntity<?> setLink(String auth, String type, String localKey, PosLinkRequest request) {
+        ResponseEntity<?> denied = requireOrgAdmin(auth);
+        if (denied != null) return denied;
+        Optional<ExternalSystem> sys = systemRepo.findByName("ODOO");
+        if (sys.isEmpty()) return ResponseEntity.status(404).body(new ErrorResponse("Odoo is not configured"));
+        if (request != null && request.odooId() != null && OdooPosLinkRepository.BRANCH.equals(type)) {
+            try {
+                if (!posOrderService.isUsableByWaha(sys.get(), request.odooId())) {
+                    return ResponseEntity.status(409).body(new ErrorResponse(
+                        "This Odoo point of sale is used outside Waha. Create a separate point of sale for Waha in Odoo."));
+                }
+            } catch (OdooException e) {
+                return ResponseEntity.status(502).body(new ErrorResponse("Odoo error: " + e.getMessage()));
+            }
+        }
+        if (request == null || request.odooId() == null) {
+            posLinks.delete(sys.get().id(), type, localKey);
+        } else {
+            posLinks.save(sys.get().id(), type, localKey, request.odooId());
+        }
+        return ResponseEntity.ok().build();
     }
 }

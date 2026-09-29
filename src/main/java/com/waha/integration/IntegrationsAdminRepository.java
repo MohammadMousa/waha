@@ -38,6 +38,22 @@ public class IntegrationsAdminRepository {
         return jdbc.queryForList(sql, p);
     }
 
+    public record LogRow(long id, String entityType, String status) {}
+
+    public List<LogRow> findLogs(long orgId, List<Long> ids) {
+        return jdbc.query(
+            "SELECT sq.id, sq.entity_type, sq.status FROM sync_queue sq"
+            + " JOIN external_systems es ON es.id = sq.system_id"
+            + " WHERE es.owner_organization_id = :orgId AND sq.id IN (:ids)",
+            new MapSqlParameterSource().addValue("orgId", orgId).addValue("ids", ids),
+            (rs, i) -> new LogRow(rs.getLong(1), rs.getString(2), rs.getString(3)));
+    }
+
+    public int deleteLogs(List<Long> ids) {
+        if (ids.isEmpty()) return 0;
+        return jdbc.update("DELETE FROM sync_queue WHERE id IN (:ids)", Map.of("ids", ids));
+    }
+
     private String where(String entityType, String status) {
         StringBuilder sb = new StringBuilder();
         if (entityType != null) sb.append("\n  AND sq.entity_type = :entityType");

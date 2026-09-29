@@ -41,19 +41,22 @@ public class OdooOrderSyncService {
     private final OrderRepository orderRepository;
     private final OdooClient odooClient;
     private final ObjectMapper objectMapper;
+    private final OdooPosOrderService posOrderService;
 
     public OdooOrderSyncService(ExternalSystemRepository systemRepo,
                                  SyncQueueRepository queueRepo,
                                  ExternalMappingRepository mappingRepo,
                                  OrderRepository orderRepository,
                                  OdooClient odooClient,
-                                 ObjectMapper objectMapper) {
+                                 ObjectMapper objectMapper,
+                                 OdooPosOrderService posOrderService) {
         this.systemRepo     = systemRepo;
         this.queueRepo      = queueRepo;
         this.mappingRepo    = mappingRepo;
         this.orderRepository = orderRepository;
         this.odooClient     = odooClient;
         this.objectMapper   = objectMapper;
+        this.posOrderService = posOrderService;
     }
 
     // Fires after OrderService marks an order PAID.
@@ -164,7 +167,7 @@ public class OdooOrderSyncService {
             if (cachedOverridePartnerId != null) return cachedOverridePartnerId;
             Optional<ExternalMapping> cached = mappingRepo.findByLocalId(
                 sys.id(), "PARTNER_OVERRIDE", override);
-            if (cached.isPresent()) {
+            if (cached.isPresent() && partnerExists(sys, Long.parseLong(cached.get().externalId()))) {
                 cachedOverridePartnerId = Long.parseLong(cached.get().externalId());
                 return cachedOverridePartnerId;
             }
@@ -187,7 +190,10 @@ public class OdooOrderSyncService {
             Optional<ExternalMapping> cached = mappingRepo.findByLocalId(
                 sys.id(), "USER", orderUsername);
             if (cached.isPresent()) {
-                return Long.parseLong(cached.get().externalId());
+                long partnerId = Long.parseLong(cached.get().externalId());
+                if (partnerExists(sys, partnerId)) return partnerId;
+                mappingRepo.deleteById(cached.get().id());
+                log.warn("Odoo partner {} for username '{}' no longer exists; resolving again", partnerId, orderUsername);
             }
             try {
                 // Email usernames → match by email field in Odoo; others by name.
@@ -213,6 +219,12 @@ public class OdooOrderSyncService {
         }
     }
 
+    // Linked partners can disappear (deleted or merged in Odoo), so a cached link is checked before use.
+    private boolean partnerExists(ExternalSystem sys, long partnerId) {
+        return !odooClient.search(sys.baseUrl(), sys.apiKey(), sys.username(), "res.partner",
+            List.of(List.of("id", "=", partnerId), List.of("active", "in", List.of(true, false)))).isEmpty();
+    }
+
     // Finds an Odoo partner by email (if provided) or name, creating one if not found.
     private long findOrCreateNamedPartner(ExternalSystem sys, String name, String email) {
         // Search by email first (more precise) then by name.
@@ -234,18 +246,19 @@ public class OdooOrderSyncService {
     // rate to Waha's configured taxRate. Throws OdooException if they differ by
     // more than 0.1 percentage points — we refuse to push rather than silently
     // corrupt billing figures.
-    private void validateOdooTaxRate(ExternalSystem sys, double wahaTaxRate) {
+    // Returns the Odoo tax id that was checked, or null when there is none to use.
+    private Long validateOdooTaxRate(ExternalSystem sys, double wahaTaxRate) {
         try {
             List<JsonNode> taxes = odooClient.searchRead(
                 sys.baseUrl(), sys.apiKey(), sys.username(),
                 "account.tax",
                 List.of(List.of("active", "=", true), List.of("type_tax_use", "=", "sale")),
-                List.of("name", "amount", "amount_type"),
+                List.of("id", "name", "amount", "amount_type"),
                 1, 0
             );
-            if (taxes.isEmpty()) return; // No taxes configured in Odoo — nothing to compare.
+            if (taxes.isEmpty()) return null; // No taxes configured in Odoo — nothing to compare.
             JsonNode tax = taxes.get(0);
-            if (!"percent".equals(tax.path("amount_type").asText())) return; // Non-percent type — skip.
+            if (!"percent".equals(tax.path("amount_type").asText())) return null; // Non-percent type — skip.
             double odooRate = tax.path("amount").asDouble(0.0) / 100.0;
             double wahaPercent  = Math.round(wahaTaxRate * 10000.0) / 100.0;
             double odooPercent  = Math.round(odooRate    * 10000.0) / 100.0;
@@ -255,102 +268,138 @@ public class OdooOrderSyncService {
                     "Fix the tax rate in one system before pushing orders.",
                     wahaPercent, tax.path("name").asText("?"), odooPercent));
             }
+            return tax.path("id").asLong();
         } catch (OdooException e) {
             throw e;
         } catch (Exception e) {
             log.warn("Could not validate Odoo tax rate: {}", e.getMessage());
             // Don't block the push if the tax validation call itself fails.
+            return null;
         }
     }
 
     private void pushOrder(ExternalSystem sys, SyncQueueItem item) throws Exception {
         JsonNode order = objectMapper.readTree(item.payload());
         String orderId = order.path("orderId").asText();
+        boolean toPos = OdooPosOrderService.TARGET_POS.equals(sys.pushTarget());
 
-        // Idempotency: check if already pushed by searching client_order_ref
-        List<Long> existing = odooClient.search(
-            sys.baseUrl(), sys.apiKey(), sys.username(),
-            "sale.order",
-            List.of(List.of("client_order_ref", "=", orderId))
-        );
+        if (mappingRepo.findByLocalId(sys.id(), "ORDER", orderId).isPresent()
+                || mappingRepo.findByLocalId(sys.id(), OdooPosOrderService.POS_ORDER, orderId).isPresent()) {
+            log.info("Order {} was already pushed to Odoo", orderId);
+            return;
+        }
 
-        if (!existing.isEmpty()) {
-            long odooOrderId = existing.get(0);
-            mappingRepo.save(sys.id(), "ORDER", orderId, String.valueOf(odooOrderId), item.storeId());
-            log.info("Order {} already exists in Odoo as id={}", orderId, odooOrderId);
+        String mappingType = toPos ? OdooPosOrderService.POS_ORDER : "ORDER";
+        Optional<Long> existing = toPos
+            ? posOrderService.findExisting(sys, orderId)
+            : findExistingSaleOrder(sys, orderId);
+        if (existing.isPresent()) {
+            mappingRepo.save(sys.id(), mappingType, orderId, String.valueOf(existing.get()), item.storeId());
+            log.info("Order {} already exists in Odoo as id={}", orderId, existing.get());
             return;
         }
 
         // Validate that Odoo's tax rate matches Waha's before touching any billing data.
         // Silently adjusting prices or clearing taxes would corrupt accounting records.
         double wahaTaxRate = order.path("taxRate").asDouble(0.0);
-        validateOdooTaxRate(sys, wahaTaxRate);
+        Long taxId = validateOdooTaxRate(sys, wahaTaxRate);
 
-        List<Object> orderLines = new ArrayList<>();
+        List<ResolvedLine> lines = resolveLines(sys, item, order);
+        long partnerId = resolveCustomerPartnerId(sys, order.path("username").asText(null));
+
+        long odooId = toPos
+            ? posOrderService.create(sys, item, order, lines, partnerId, taxId)
+            : createSaleOrder(sys, orderId, lines, partnerId);
+        mappingRepo.save(sys.id(), mappingType, orderId, String.valueOf(odooId), item.storeId());
+        log.info("Pushed order {} to Odoo {} as id={}", orderId, toPos ? "POS" : "Sales", odooId);
+    }
+
+    // odooProductId is null when the product could not be found in Odoo.
+    public record ResolvedLine(Long odooProductId, int quantity, double unitPrice, double lineTotal, String name) {}
+
+    private List<ResolvedLine> resolveLines(ExternalSystem sys, SyncQueueItem item, JsonNode order) {
+        List<ResolvedLine> lines = new ArrayList<>();
         JsonNode items = order.path("items");
-        if (items.isArray()) {
-            for (JsonNode lineNode : items) {
-                long localProductId = lineNode.path("productId").asLong();
-                Optional<ExternalMapping> productMap = mappingRepo.findByLocalId(
-                    sys.id(), "PRODUCT", String.valueOf(localProductId));
+        if (!items.isArray()) return lines;
+        for (JsonNode lineNode : items) {
+            long localProductId = lineNode.path("productId").asLong();
+            Optional<ExternalMapping> productMap = mappingRepo.findByLocalId(
+                sys.id(), "PRODUCT", String.valueOf(localProductId));
 
-                Map<String, Object> line = new HashMap<>();
-                if (productMap.isPresent()) {
-                    line.put("product_id", Long.parseLong(productMap.get().externalId()));
-                } else {
-                    // No cached mapping — search Odoo by barcode first, name as fallback.
-                    String barcode     = lineNode.path("barcode").asText(null);
-                    String productName = lineNode.path("name").path("en").asText(null);
-                    try {
-                        List<Long> found = List.of();
-                        if (barcode != null && barcode.matches("ODOO_\\d+")) {
-                            // Placeholder barcode from the catalog pull: ODOO_<template id>.
-                            found = odooClient.search(sys.baseUrl(), sys.apiKey(), sys.username(),
-                                "product.product",
-                                List.of(List.of("product_tmpl_id", "=", Long.parseLong(barcode.substring(5)))));
-                        } else if (barcode != null && !barcode.isBlank()) {
-                            found = odooClient.search(sys.baseUrl(), sys.apiKey(), sys.username(),
-                                "product.product",
-                                List.of(List.of("barcode", "=", barcode.trim())));
-                        }
-                        if (found.isEmpty() && productName != null && !productName.isBlank()) {
-                            found = odooClient.search(sys.baseUrl(), sys.apiKey(), sys.username(),
-                                "product.product",
-                                List.of(List.of("name", "=", productName.trim())));
-                        }
-                        if (!found.isEmpty()) {
-                            long odooProductId = found.get(0);
-                            mappingRepo.save(sys.id(), "PRODUCT", String.valueOf(localProductId),
-                                String.valueOf(odooProductId), item.storeId());
-                            line.put("product_id", odooProductId);
-                            log.info("Resolved product_id={} for barcode='{}' name='{}' on-the-fly",
-                                odooProductId, barcode, productName);
-                        } else {
-                            log.warn("Product barcode='{}' name='{}' (id={}) not found in Odoo — line sent without product_id",
-                                barcode, productName, localProductId);
-                        }
-                    } catch (Exception e) {
-                        log.warn("Could not resolve Odoo product barcode='{}' name='{}': {}",
-                            barcode, productName, e.getMessage());
+            Long odooProductId = null;
+            if (productMap.isPresent()) {
+                odooProductId = Long.parseLong(productMap.get().externalId());
+            } else {
+                // No cached mapping — search Odoo by barcode first, name as fallback.
+                String barcode     = lineNode.path("barcode").asText(null);
+                String productName = lineNode.path("name").path("en").asText(null);
+                try {
+                    List<Long> found = List.of();
+                    if (barcode != null && barcode.matches("ODOO_\\d+")) {
+                        // Placeholder barcode from the catalog pull: ODOO_<template id>.
+                        found = odooClient.search(sys.baseUrl(), sys.apiKey(), sys.username(),
+                            "product.product",
+                            List.of(List.of("product_tmpl_id", "=", Long.parseLong(barcode.substring(5)))));
+                    } else if (barcode != null && !barcode.isBlank()) {
+                        found = odooClient.search(sys.baseUrl(), sys.apiKey(), sys.username(),
+                            "product.product",
+                            List.of(List.of("barcode", "=", barcode.trim())));
                     }
+                    if (found.isEmpty() && productName != null && !productName.isBlank()) {
+                        found = odooClient.search(sys.baseUrl(), sys.apiKey(), sys.username(),
+                            "product.product",
+                            List.of(List.of("name", "=", productName.trim())));
+                    }
+                    if (!found.isEmpty()) {
+                        odooProductId = found.get(0);
+                        mappingRepo.save(sys.id(), "PRODUCT", String.valueOf(localProductId),
+                            String.valueOf(odooProductId), item.storeId());
+                        log.info("Resolved product_id={} for barcode='{}' name='{}' on-the-fly",
+                            odooProductId, barcode, productName);
+                    } else {
+                        log.warn("Product barcode='{}' name='{}' (id={}) not found in Odoo — line sent without product_id",
+                            barcode, productName, localProductId);
+                    }
+                } catch (Exception e) {
+                    log.warn("Could not resolve Odoo product barcode='{}' name='{}': {}",
+                        barcode, productName, e.getMessage());
                 }
-                line.put("product_uom_qty", lineNode.path("quantity").asInt());
-                line.put("price_unit",      lineNode.path("unitPrice").asDouble());
-                line.put("name",            lineNode.path("name").path("en").asText("Product"));
-                orderLines.add(List.of(0, 0, line));
             }
+            int qty = lineNode.path("quantity").asInt();
+            double unitPrice = lineNode.path("unitPrice").asDouble();
+            double lineTotal = lineNode.path("lineTotal").asDouble(unitPrice * qty);
+            lines.add(new ResolvedLine(odooProductId, qty, unitPrice, lineTotal,
+                lineNode.path("name").path("en").asText("Product")));
         }
+        return lines;
+    }
 
-        String orderUsername = order.path("username").asText(null);
+    private Optional<Long> findExistingSaleOrder(ExternalSystem sys, String orderId) {
+        List<Long> existing = odooClient.search(
+            sys.baseUrl(), sys.apiKey(), sys.username(),
+            "sale.order",
+            List.of(List.of("client_order_ref", "=", orderId)));
+        return existing.stream().findFirst();
+    }
+
+    private long createSaleOrder(ExternalSystem sys, String orderId, List<ResolvedLine> lines, long partnerId) {
+        List<Object> orderLines = new ArrayList<>();
+        for (ResolvedLine l : lines) {
+            Map<String, Object> line = new HashMap<>();
+            if (l.odooProductId() != null) line.put("product_id", l.odooProductId());
+            line.put("product_uom_qty", l.quantity());
+            line.put("price_unit",      l.unitPrice());
+            line.put("name",            l.name());
+            orderLines.add(List.of(0, 0, line));
+        }
         Map<String, Object> values = new HashMap<>();
         values.put("client_order_ref", orderId);
         values.put("order_line",       orderLines);
-        values.put("partner_id",       resolveCustomerPartnerId(sys, orderUsername));
+        values.put("partner_id",       partnerId);
 
         long odooId = odooClient.create(sys.baseUrl(), sys.apiKey(), sys.username(), "sale.order", values);
         // Confirm the quotation so it appears as a confirmed Sales Order in Odoo (not just a draft Quotation).
         odooClient.callMethod(sys.baseUrl(), sys.apiKey(), sys.username(), "sale.order", "action_confirm", List.of(odooId));
-        mappingRepo.save(sys.id(), "ORDER", orderId, String.valueOf(odooId), item.storeId());
-        log.info("Pushed order {} to Odoo as id={}", orderId, odooId);
+        return odooId;
     }
 }
