@@ -140,6 +140,9 @@ public class EmployeeAdminController {
             lockoutService.clearEmployeeLockout(id);
 
         employeeRepository.patch(id, patchBody);
+        if (body.has("pinCode") || (body.has("enabled") && !body.get("enabled").asBoolean())) {
+            sessionService.endEmployeeSessions(id);
+        }
 
         if (body.has("role") || body.has("storeId")) {
             employeeRepository.clearRoles(id);
@@ -161,8 +164,24 @@ public class EmployeeAdminController {
         if (!employeeRepository.existsById(id))
             return ResponseEntity.status(404).body(new ErrorResponse("Employee not found: " + id));
 
+        sessionService.endEmployeeSessions(id);
         employeeRepository.delete(id);
         return ResponseEntity.ok().build();
+    }
+
+    // Ends every token of this employee; they must log in again with their PIN.
+    @PostMapping("/{id}/sign-out")
+    public ResponseEntity<?> signOut(
+            @RequestHeader(value = "Authorization", required = false) String auth,
+            @PathVariable long id) {
+
+        UserSession session = sessionService.requireSession(auth);
+        sessionService.requirePermissionForOrg(session, Permission.MANAGE_EMPLOYEES, session.organizationId());
+
+        if (!employeeRepository.existsById(id))
+            return ResponseEntity.status(404).body(new ErrorResponse("Employee not found: " + id));
+
+        return ResponseEntity.ok(java.util.Map.of("signedOut", sessionService.endEmployeeSessions(id)));
     }
 
     // ── store assignment ──────────────────────────────────────────────────────

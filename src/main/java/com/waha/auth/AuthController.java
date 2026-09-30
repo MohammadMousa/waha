@@ -213,6 +213,8 @@ public class AuthController {
                 return ResponseEntity.status(401).body(new ErrorResponse("Current password is incorrect"));
 
             userRepository.updatePassword(session.userId(), passwordEncoder.encode(newPassword));
+            // Other devices signed in with the old password are signed out; this one stays signed in.
+            sessionService.endUserSessions(session.userId(), session.token());
             return ResponseEntity.ok().build();
         } catch (UnauthorizedException e) {
             return ResponseEntity.status(401).body(new ErrorResponse(e.getMessage()));

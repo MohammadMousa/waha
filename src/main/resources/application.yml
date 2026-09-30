@@ -27,8 +27,6 @@ waha:
   # phone can actually reach, not whatever host/port the container sees
   # internally.
   public-base-url: ${WAHA_PUBLIC_BASE_URL:http://localhost:8081}
-  session:
-    ttl-days: 30
   cors:
     # Native Flutter (Android/iOS) calls this API directly and never sends
     # CORS preflight requests at all - this setting only matters if you test

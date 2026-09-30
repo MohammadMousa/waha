@@ -96,7 +96,11 @@ public class UserAdminController {
 
         if (body.has("password")) {
             String pw = body.get("password").asText("").trim();
-            if (!pw.isEmpty()) userRepository.updatePassword(id, passwordEncoder.encode(pw));
+            if (!pw.isEmpty()) {
+                userRepository.updatePassword(id, passwordEncoder.encode(pw));
+                // An admin resetting the password ends every session of that user, including the admin's own if it is them.
+                sessionService.endUserSessions(id, null);
+            }
         }
 
         if (body.has("role")) {
@@ -140,6 +144,7 @@ public class UserAdminController {
         if (!userRepository.existsById(id))
             return ResponseEntity.status(404).body(new ErrorResponse("User not found: " + id));
 
+        sessionService.endUserSessions(id, null);
         userRepository.delete(id);
         return ResponseEntity.ok().build();
     }

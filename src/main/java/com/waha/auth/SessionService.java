@@ -2,14 +2,12 @@ package com.waha.auth;
 
 import com.waha.common.ForbiddenException;
 import com.waha.common.UnauthorizedException;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Service;
 
 import java.security.SecureRandom;
 import java.sql.Timestamp;
 import java.time.Instant;
-import java.time.temporal.ChronoUnit;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -24,8 +22,8 @@ public class SessionService {
     private final RoleRepository roleRepository;
     private final SecureRandom random = new SecureRandom();
 
-    @Value("${waha.session.ttl-days:30}")
-    private int ttlDays;
+    // Tokens stay valid until explicit logout, revocation or account/session invalidation (Waha Rules: Auto-login).
+    private static final Instant NO_EXPIRY = Instant.parse("9999-12-31T00:00:00Z");
 
     public SessionService(NamedParameterJdbcTemplate namedJdbc, UserRepository userRepository,
                           RoleRepository roleRepository) {
@@ -44,7 +42,7 @@ public class SessionService {
 
     public String createSession(long userId) {
         String token = generateToken();
-        Instant expiresAt = Instant.now().plus(ttlDays, ChronoUnit.DAYS);
+        Instant expiresAt = NO_EXPIRY;
         Map<String, Object> params = new HashMap<>();
         params.put("token", token);
         params.put("userId", userId);
@@ -58,7 +56,7 @@ public class SessionService {
 
     public String createEmployeeSession(long employeeId) {
         String token = generateToken();
-        Instant expiresAt = Instant.now().plus(ttlDays, ChronoUnit.DAYS);
+        Instant expiresAt = NO_EXPIRY;
         namedJdbc.update(
             "INSERT INTO user_sessions (token, employee_id, expires_at) VALUES (:token, :eid, :exp)",
             Map.of("token", token, "eid", employeeId, "exp", Timestamp.from(expiresAt))
@@ -68,7 +66,7 @@ public class SessionService {
 
     public String createDeviceSession(long deviceId) {
         String token = generateToken();
-        Instant expiresAt = Instant.now().plus(ttlDays, ChronoUnit.DAYS);
+        Instant expiresAt = NO_EXPIRY;
         namedJdbc.update(
             "INSERT INTO user_sessions (token, device_id, expires_at) VALUES (:token, :did, :exp)",
             Map.of("token", token, "did", deviceId, "exp", Timestamp.from(expiresAt))
@@ -89,7 +87,10 @@ public class SessionService {
             "LEFT JOIN users u      ON u.id = us.user_id " +
             "LEFT JOIN employees e  ON e.id = us.employee_id " +
             "LEFT JOIN devices d    ON d.id = us.device_id " +
-            "WHERE us.token = :token AND us.expires_at > NOW()",
+            "WHERE us.token = :token AND us.expires_at > NOW() " +
+            // Tokens never expire, so a disabled device or employee must be refused on every request.
+            "  AND (us.device_id IS NULL OR d.enabled = 1) " +
+            "  AND (us.employee_id IS NULL OR e.enabled = 1)",
             Map.of("token", token),
             (rs, i) -> {
                 long storeId = rs.getLong("store_id");
@@ -125,6 +126,30 @@ public class SessionService {
 
     public void deleteSession(String token) {
         namedJdbc.update("DELETE FROM user_sessions WHERE token = :token", Map.of("token", token));
+    }
+
+    // Revocation: tokens never expire, so these are how access ends (disable, PIN/password change,
+    // sign-out, delete). Each returns how many tokens were ended.
+    public int endDeviceSessions(long deviceId) {
+        return namedJdbc.update("DELETE FROM user_sessions WHERE device_id = :id", Map.of("id", deviceId));
+    }
+
+    public int endEmployeeSessions(long employeeId) {
+        return namedJdbc.update("DELETE FROM user_sessions WHERE employee_id = :id", Map.of("id", employeeId));
+    }
+
+    // exceptToken keeps the caller's own session, e.g. when users change their own password.
+    public int endUserSessions(long userId, String exceptToken) {
+        return namedJdbc.update(
+            "DELETE FROM user_sessions WHERE user_id = :id AND device_id IS NULL AND employee_id IS NULL"
+                + (exceptToken != null ? " AND token <> :keep" : ""),
+            exceptToken != null ? Map.of("id", userId, "keep", exceptToken) : Map.of("id", userId));
+    }
+
+    // A device moved to another branch keeps working; its open tokens follow it to the new branch.
+    public void moveDeviceSessions(long deviceId, long storeId) {
+        namedJdbc.update("UPDATE user_sessions SET store_id = :sid WHERE device_id = :id",
+            Map.of("sid", storeId, "id", deviceId));
     }
 
     public Optional<UserSession> tryResolveSession(String authHeader) {

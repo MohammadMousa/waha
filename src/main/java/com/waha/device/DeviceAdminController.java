@@ -126,7 +126,28 @@ public class DeviceAdminController {
             lockoutService.clearDeviceLockout(id);
 
         deviceRepository.patch(id, patchBody);
+        if (body.has("pinCode") || (body.has("enabled") && !body.get("enabled").asBoolean())) {
+            sessionService.endDeviceSessions(id);
+        }
+        if (body.has("storeId")) {
+            sessionService.moveDeviceSessions(id, body.get("storeId").asLong());
+        }
         return ResponseEntity.ok().build();
+    }
+
+    // Ends every token of this device (lost, stolen or replaced kiosk). It must log in again with its PIN.
+    @PostMapping("/{id}/sign-out")
+    public ResponseEntity<?> signOut(
+            @RequestHeader(value = "Authorization", required = false) String auth,
+            @PathVariable long id) {
+
+        UserSession session = sessionService.requireSession(auth);
+        sessionService.requirePermissionForOrg(session, Permission.MANAGE_DEVICES, session.organizationId());
+
+        if (!deviceRepository.existsById(id))
+            return ResponseEntity.status(404).body(new ErrorResponse("Device not found: " + id));
+
+        return ResponseEntity.ok(java.util.Map.of("signedOut", sessionService.endDeviceSessions(id)));
     }
 
     @DeleteMapping("/{id}")
@@ -140,6 +161,7 @@ public class DeviceAdminController {
         if (!deviceRepository.existsById(id))
             return ResponseEntity.status(404).body(new ErrorResponse("Device not found: " + id));
 
+        sessionService.endDeviceSessions(id);
         deviceRepository.delete(id);
         return ResponseEntity.ok().build();
     }
