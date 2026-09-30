@@ -108,7 +108,11 @@ public class OrderService {
         }).toList();
 
         BigDecimal subtotal = itemViews.stream().map(OrderItemView::lineTotal).reduce(BigDecimal.ZERO, BigDecimal::add);
-        BigDecimal tax = subtotal.multiply(vatRate).setScale(2, RoundingMode.HALF_UP);
+        // Tax is rounded per line and summed, the way Odoo books it (its default "round per line"),
+        // so the amount charged always equals what Odoo posts when a POS session closes.
+        BigDecimal tax = itemViews.stream()
+            .map(line -> line.lineTotal().multiply(vatRate).setScale(2, RoundingMode.HALF_UP))
+            .reduce(BigDecimal.ZERO, BigDecimal::add);
         BigDecimal total = subtotal.add(tax);
 
         return new Totals(subtotal, tax, total, itemViews, productsById);
