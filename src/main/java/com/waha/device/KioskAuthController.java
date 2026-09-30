@@ -129,6 +129,7 @@ public class KioskAuthController {
 
         Map<String, Object> resp = new LinkedHashMap<>();
         resp.put("deviceId",       session.deviceId());
+        resp.put("username",       device.get().username());
         resp.put("organizationId", session.organizationId());
         resp.put("storeId",        session.storeId());
         resp.put("mode",           "KIOSK");

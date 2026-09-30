@@ -148,6 +148,7 @@ public class PosAuthController {
 
         Map<String, Object> resp = new LinkedHashMap<>();
         resp.put("employeeId",     employeeId);
+        resp.put("username",       profile.getOrDefault("username", null));
         resp.put("organizationId", sessionOpt.get().organizationId());
         resp.put("employeeName",   profile.getOrDefault("employeeName", null));
         resp.put("roleName",       profile.getOrDefault("roleName", null));

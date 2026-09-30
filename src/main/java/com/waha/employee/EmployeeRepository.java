@@ -69,7 +69,7 @@ public class EmployeeRepository {
 
     public Map<String, Object> findProfileForSession(long employeeId) {
         List<Map<String, Object>> rows = namedJdbc.queryForList(
-            "SELECT CONCAT(COALESCE(e.first_name,''), ' ', COALESCE(e.last_name,'')) AS employeeName, " +
+            "SELECT e.username AS username, CONCAT(COALESCE(e.first_name,''), ' ', COALESCE(e.last_name,'')) AS employeeName, " +
             "       (SELECT r.name FROM employee_roles er JOIN roles r ON r.id = er.role_id " +
             "        WHERE er.employee_id = e.id ORDER BY er.role_id LIMIT 1) AS roleName " +
             "FROM employees e WHERE e.id = :id",
