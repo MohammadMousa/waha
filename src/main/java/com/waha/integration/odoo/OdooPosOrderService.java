@@ -48,18 +48,21 @@ public class OdooPosOrderService {
     private final StoreRepository stores;
     private final LocalTime dayStart;
     private final ZoneId zone;
+    private final double maxCloseDifference;
     private final Map<Long, Long> companyByConfig = new ConcurrentHashMap<>();
     private final java.util.Set<String> enabledMethods = ConcurrentHashMap.newKeySet();
     private final java.util.Set<Long> existingConfigs = ConcurrentHashMap.newKeySet();
 
     public OdooPosOrderService(OdooClient odooClient, OdooPosLinkRepository links, StoreRepository stores,
                                @Value("${waha.odoo.pos-day-start:03:00}") String dayStart,
-                               @Value("${waha.odoo.pos-time-zone:Asia/Riyadh}") String zone) {
+                               @Value("${waha.odoo.pos-time-zone:Asia/Riyadh}") String zone,
+                               @Value("${waha.odoo.pos-max-close-difference:1.00}") double maxCloseDifference) {
         this.odooClient = odooClient;
         this.links      = links;
         this.stores     = stores;
         this.dayStart   = LocalTime.parse(dayStart);
         this.zone       = ZoneId.of(zone);
+        this.maxCloseDifference = maxCloseDifference;
     }
 
     public record OdooOption(long id, String name) {}
@@ -146,7 +149,10 @@ public class OdooPosOrderService {
             links.delete(sys.id(), OdooPosLinkRepository.BRANCH, key);
         }
         long id = pointOfSaleForBranch(sys, storeId);
-        if (!usedOutsideWaha(sys, id)) links.save(sys.id(), OdooPosLinkRepository.BRANCH, key, id);
+        if (usedOutsideWaha(sys, id)) {
+            throw new OdooException("Odoo point of sale " + id + " is used outside Waha; Waha will not send orders to it");
+        }
+        links.save(sys.id(), OdooPosLinkRepository.BRANCH, key, id);
         return id;
     }
 
@@ -260,11 +266,9 @@ public class OdooPosOrderService {
         enabledMethods.add(key);
     }
 
-    // Returns today's Waha session for this point of sale, closing yesterday's first if needed.
+    // Returns today's session for Waha's point of sale, closing yesterday's first if needed.
+    // The point of sale is Waha's own, so a session someone opened on it in Odoo is used too.
     private long openSession(ExternalSystem sys, long configId, long storeId) {
-        if (usedOutsideWaha(sys, configId)) {
-            throw new OdooException("Odoo point of sale " + configId + " is used outside Waha; Waha will not send orders to it");
-        }
         List<JsonNode> sessions = odooClient.searchRead(sys.baseUrl(), sys.apiKey(), sys.username(),
             "pos.session",
             List.of(List.of("config_id", "=", configId), List.of("state", "!=", "closed")),
@@ -273,16 +277,19 @@ public class OdooPosOrderService {
             long id = s.path("id").asLong();
             switch (s.path("state").asText()) {
                 case "opened" -> {
-                    if (!startedBeforeBusinessDay(s.path("start_at").asText())) return id;
+                    if (!startedBeforeBusinessDay(s.path("start_at").asText())) {
+                        links.save(sys.id(), OdooPosLinkRepository.SESSION, String.valueOf(id), configId);
+                        return id;
+                    }
                     closeSession(sys, id);
                     log.info("Closed Odoo POS session id={} at the start of a new business day", id);
                 }
                 case "opening_control" -> {
+                    links.save(sys.id(), OdooPosLinkRepository.SESSION, String.valueOf(id), configId);
                     finishOpening(sys, id);
                     return id;
                 }
-                case "closing_control" -> odooClient.callMethod(sys.baseUrl(), sys.apiKey(), sys.username(),
-                    "pos.session", "action_pos_session_close", List.of(id));
+                case "closing_control" -> closeSession(sys, id);
                 default -> { }
             }
         }
@@ -342,16 +349,52 @@ public class OdooPosOrderService {
         return started.isBefore(dayBegan);
     }
 
+    // Odoo does not raise an error when it cannot post a session: it returns its "Force Close Session"
+    // dialog instead, e.g. when Waha's order-level tax rounding and Odoo's per-line rounding differ by
+    // a few halalas. Waha confirms that dialog like a cashier would, up to maxCloseDifference, and
+    // always checks the session really closed before a new one is opened.
     private void closeSession(ExternalSystem sys, long sessionId) {
-        odooClient.callMethod(sys.baseUrl(), sys.apiKey(), sys.username(),
-            "pos.session", "action_pos_session_closing_control", List.of(sessionId));
-        List<JsonNode> after = odooClient.searchRead(sys.baseUrl(), sys.apiKey(), sys.username(),
-            "pos.session", List.of(List.of("id", "=", sessionId)), List.of("state"), 1, 0);
-        // With cash control on, the first call only moves the session to closing_control.
-        if (!after.isEmpty() && "closing_control".equals(after.get(0).path("state").asText())) {
-            odooClient.callMethod(sys.baseUrl(), sys.apiKey(), sys.username(),
-                "pos.session", "action_pos_session_close", List.of(sessionId));
+        String response = "";
+        if ("opened".equals(sessionState(sys, sessionId))) {
+            response = odooClient.callMethodRaw(sys.baseUrl(), sys.apiKey(), sys.username(),
+                "pos.session", "action_pos_session_closing_control", List.of(sessionId), null);
         }
+        // With cash control on, the first call only moves the session to closing_control.
+        if ("closing_control".equals(sessionState(sys, sessionId)) && forceCloseWizardId(response) == null) {
+            response = odooClient.callMethodRaw(sys.baseUrl(), sys.apiKey(), sys.username(),
+                "pos.session", "action_pos_session_close", List.of(sessionId), null);
+        }
+        Long wizardId = forceCloseWizardId(response);
+        if (wizardId != null) {
+            List<JsonNode> wizard = odooClient.searchRead(sys.baseUrl(), sys.apiKey(), sys.username(),
+                "pos.close.session.wizard", List.of(List.of("id", "=", wizardId)), List.of("amount_to_balance"), 1, 0);
+            double difference = wizard.isEmpty() ? 0 : Math.abs(wizard.get(0).path("amount_to_balance").asDouble());
+            if (difference > maxCloseDifference) {
+                throw new OdooException("Odoo will not close POS session " + sessionId + ": its totals differ by "
+                    + difference + ", more than the " + maxCloseDifference + " Waha accepts. Close it in Odoo after checking.");
+            }
+            odooClient.callMethodRaw(sys.baseUrl(), sys.apiKey(), sys.username(),
+                "pos.close.session.wizard", "close_session", List.of(wizardId),
+                Map.of("active_ids", List.of(sessionId), "active_model", "pos.session"));
+            log.warn("Closed Odoo POS session id={} accepting a rounding difference of {}", sessionId, difference);
+        }
+        String state = sessionState(sys, sessionId);
+        if (!"closed".equals(state)) {
+            throw new OdooException("Odoo did not close POS session " + sessionId + " (state: " + state
+                + "); close it in Odoo and retry the order");
+        }
+    }
+
+    private static final java.util.regex.Pattern WIZARD_ID = java.util.regex.Pattern.compile(
+        "pos\\.close\\.session\\.wizard.*?<name>res_id</name>\\s*<value>\\s*<int>(\\d+)</int>|"
+        + "<name>res_id</name>\\s*<value>\\s*<int>(\\d+)</int>.*?pos\\.close\\.session\\.wizard",
+        java.util.regex.Pattern.DOTALL);
+
+    private static Long forceCloseWizardId(String response) {
+        if (response == null || !response.contains("pos.close.session.wizard")) return null;
+        java.util.regex.Matcher m = WIZARD_ID.matcher(response);
+        if (!m.find()) return null;
+        return Long.parseLong(m.group(1) != null ? m.group(1) : m.group(2));
     }
 
     private void markPaid(ExternalSystem sys, long posOrderId) {

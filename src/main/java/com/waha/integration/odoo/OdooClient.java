@@ -126,10 +126,12 @@ public class OdooClient {
 
     private String post(String url, String xml) {
         HttpHeaders headers = new HttpHeaders();
-        headers.setContentType(MediaType.TEXT_XML);
+        // Without an explicit charset the request is sent as ISO-8859-1: Arabic turns into "?" and
+        // characters like "é" or a non-breaking space become bytes Odoo cannot parse.
+        headers.setContentType(new MediaType("text", "xml", java.nio.charset.StandardCharsets.UTF_8));
         try {
             String result = restTemplate.postForObject(url,
-                new HttpEntity<>(xml, headers), String.class);
+                new HttpEntity<>(xml.getBytes(java.nio.charset.StandardCharsets.UTF_8), headers), String.class);
             if (result != null && result.contains("<fault>")) {
                 String msg = extractTagContent(result, "string");
                 throw new OdooException("Odoo fault: " + (msg != null ? msg : result));
@@ -164,8 +166,20 @@ public class OdooClient {
 
     private String xmlEscape(String s) {
         if (s == null) return "";
-        return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        return stripInvalidXmlChars(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
                 .replace("\"", "&quot;").replace("'", "&apos;");
+    }
+
+    // XML 1.0 forbids control characters other than tab, LF and CR (e.g. the GS separator inside
+    // scanned GS1 barcodes); one such character makes Odoo reject the whole request.
+    private static String stripInvalidXmlChars(String s) {
+        StringBuilder out = new StringBuilder(s.length());
+        s.codePoints().forEach(cp -> {
+            boolean valid = cp == 0x9 || cp == 0xA || cp == 0xD
+                || (cp >= 0x20 && cp <= 0xD7FF) || (cp >= 0xE000 && cp <= 0xFFFD) || (cp >= 0x10000 && cp <= 0x10FFFF);
+            if (valid) out.appendCodePoint(cp);
+        });
+        return out.toString();
     }
 
     // Converts a domain list (e.g. [["write_date",">","2024-01-01"]]) to XML-RPC array.
@@ -242,6 +256,19 @@ public class OdooClient {
     public void callMethod(String baseUrl, String apiKey, String username,
                            String model, String method, List<Long> ids) {
         callMethod(baseUrl, apiKey, username, model, method, ids, List.of());
+    }
+
+    // Returns the raw XML-RPC response ("" when the method returned None). context may be null.
+    public String callMethodRaw(String baseUrl, String apiKey, String username,
+                                String model, String method, List<Long> ids, Map<String, Object> context) {
+        String argsXml = "<array><data><value>" + scalarToXml(ids) + "</value></data></array>";
+        String kwargsXml = context == null ? "<struct/>" : "<struct>" + member("context", mapToXml(context)) + "</struct>";
+        try {
+            return executeKwRaw(baseUrl, apiKey, username, model, method, argsXml, kwargsXml);
+        } catch (OdooException e) {
+            if (e.getMessage() == null || !e.getMessage().contains("cannot marshal None")) throw e;
+            return "";
+        }
     }
 
     // extraArgs are passed as positional arguments after the record ids.
