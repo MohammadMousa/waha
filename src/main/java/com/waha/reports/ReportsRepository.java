@@ -139,6 +139,7 @@ public class ReportsRepository {
             .addValue("offset", (long) page * size);
         String sql = """
             SELECT
+              o.id,
               o.display_id,
               s.name                                          AS branch_name,
               s.display_name                                  AS branch_display_name,

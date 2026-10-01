@@ -24,6 +24,12 @@ public class OrgPropertiesController {
             new PropertySpec("string", "Default display language for the kiosk", "ar or en"));
         KNOWN_KEYS.put("check_landing_page_interval_minutes",
             new PropertySpec("integer", "How often the kiosk re-checks the landing page for changes", "1–" + INTERVAL_MAX + " minutes"));
+        KNOWN_KEYS.put("auto_log_upload_enabled",
+            new PropertySpec("boolean", "Kiosks upload their diagnostic logs automatically", "true or false"));
+        KNOWN_KEYS.put("max_log_uploads_per_hour",
+            new PropertySpec("integer", "Most automatic log uploads one kiosk may send per hour (default 3)", "1–60"));
+        KNOWN_KEYS.put("log_harvest_seconds",
+            new PropertySpec("integer", "Seconds of log the kiosk collects for each automatic upload (default 30)", "10–240 seconds"));
     }
 
     record PropertySpec(String type, String description, String constraints) {}
@@ -146,8 +152,26 @@ public class OrgPropertiesController {
                     yield "check_landing_page_interval_minutes must be an integer";
                 }
             }
+            case "auto_log_upload_enabled" -> {
+                String v = value.trim().toLowerCase();
+                yield (v.equals("true") || v.equals("false")) ? null
+                    : "auto_log_upload_enabled must be 'true' or 'false'";
+            }
+            case "max_log_uploads_per_hour" -> intInRange(key, value, 1, 60);
+            case "log_harvest_seconds"      -> intInRange(key, value, 10, 240);
             default -> null; // free-form key — pass through
         };
+    }
+
+    private static String intInRange(String key, String value, int min, int max) {
+        try {
+            int v = Integer.parseInt(value.trim());
+            if (v < min) return key + " must be at least " + min;
+            if (v > max) return key + " must be at most " + max;
+            return null;
+        } catch (NumberFormatException e) {
+            return key + " must be an integer";
+        }
     }
 
     private UserSession require(String auth) {
