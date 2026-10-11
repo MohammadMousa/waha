@@ -136,6 +136,7 @@ public class SessionService {
     // Revocation: tokens never expire, so these are how access ends (disable, PIN/password change,
     // sign-out, delete). Each returns how many tokens were ended.
     public int endDeviceSessions(long deviceId) {
+        lastSeen.forgetDevice(deviceId);
         return namedJdbc.update("DELETE FROM user_sessions WHERE device_id = :id", Map.of("id", deviceId));
     }
 

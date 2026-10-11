@@ -115,4 +115,77 @@ public class DeviceStatusController {
         out.put("items",            rows);
         return ResponseEntity.ok(out);
     }
+
+    // ── Sessions of one device ────────────────────────────────────────────────
+
+    // Admin: the sessions (logins) of a device, newest activity first. The token itself is never returned;
+    // each session has a reference (a hash of the token) used to disconnect it.
+    @GetMapping("/admin/devices/{id}/sessions")
+    public ResponseEntity<?> sessions(
+            @RequestHeader(value = "Authorization", required = false) String auth,
+            @PathVariable long id) {
+        UserSession session = sessionService.requireSession(auth);
+        sessionService.requirePermissionForOrg(session, Permission.MANAGE_DEVICES, session.organizationId());
+        if (!deviceInOrg(id, session.organizationId()))
+            return ResponseEntity.status(404).body(new ErrorResponse("Device not found"));
+
+        List<Map<String, Object>> rows = jdbc.query("""
+            SELECT us.token, SHA2(us.token, 256) AS ref, us.created_at, us.last_seen_at, us.app_version,
+                   us.mode, us.store_id, s.name AS store_name
+            FROM user_sessions us LEFT JOIN stores s ON s.id = us.store_id
+            WHERE us.device_id = :id
+            """, Map.of("id", id), (rs, i) -> {
+                Timestamp created = rs.getTimestamp("created_at");
+                Timestamp dbSeen  = rs.getTimestamp("last_seen_at");
+                Instant seen = dbSeen != null ? dbSeen.toInstant() : null;
+                String version = rs.getString("app_version");
+                var mem = lastSeen.getSession(rs.getString("token"));
+                if (mem.isPresent()) {
+                    if (seen == null || mem.get().at().isAfter(seen)) seen = mem.get().at();
+                    if (mem.get().appVersion() != null) version = mem.get().appVersion();
+                }
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("ref",        rs.getString("ref"));
+                m.put("createdAt",  created != null ? created.toInstant().toString() : null);
+                m.put("lastSeenAt", seen != null ? seen.toString() : null);
+                m.put("appVersion", version);
+                m.put("mode",       rs.getString("mode"));
+                long sid = rs.getLong("store_id");
+                m.put("storeId",    rs.wasNull() ? null : sid);
+                m.put("storeName",  rs.getString("store_name"));
+                return m;
+            });
+        // Newest activity first (a session never seen sorts by creation time).
+        rows.sort((a, b) -> String.valueOf(b.get("lastSeenAt") != null ? b.get("lastSeenAt") : b.get("createdAt"))
+            .compareTo(String.valueOf(a.get("lastSeenAt") != null ? a.get("lastSeenAt") : a.get("createdAt"))));
+        if (!rows.isEmpty()) rows.get(0).put("latest", true);
+        for (int i = 1; i < rows.size(); i++) rows.get(i).put("latest", false);
+        return ResponseEntity.ok(Map.of("items", rows));
+    }
+
+    // Admin: disconnect one session. That device gets a 401 on its next call and must log in again.
+    @DeleteMapping("/admin/devices/{id}/sessions/{ref}")
+    public ResponseEntity<?> disconnect(
+            @RequestHeader(value = "Authorization", required = false) String auth,
+            @PathVariable long id, @PathVariable String ref) {
+        UserSession session = sessionService.requireSession(auth);
+        sessionService.requirePermissionForOrg(session, Permission.MANAGE_DEVICES, session.organizationId());
+        if (!deviceInOrg(id, session.organizationId()))
+            return ResponseEntity.status(404).body(new ErrorResponse("Device not found"));
+
+        List<String> tokens = jdbc.queryForList(
+            "SELECT token FROM user_sessions WHERE device_id = :id AND SHA2(token, 256) = :ref",
+            Map.of("id", id, "ref", ref), String.class);
+        if (tokens.isEmpty())
+            return ResponseEntity.status(404).body(new ErrorResponse("Session not found"));
+        sessionService.deleteSession(tokens.get(0));
+        return ResponseEntity.noContent().build();
+    }
+
+    private boolean deviceInOrg(long deviceId, long orgId) {
+        Integer n = jdbc.queryForObject(
+            "SELECT COUNT(*) FROM devices WHERE id = :id AND organization_id = :org",
+            Map.of("id", deviceId, "org", orgId), Integer.class);
+        return n != null && n > 0;
+    }
 }

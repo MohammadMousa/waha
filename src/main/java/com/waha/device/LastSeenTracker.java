@@ -28,6 +28,8 @@ public class LastSeenTracker {
     private final JdbcTemplate jdbc;
     private final ConcurrentHashMap<String, SessionSeen> dirtySessions = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<Long, Seen> byDevice = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Seen> bySession = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, Long> sessionDevice = new ConcurrentHashMap<>();
     private volatile Instant lastFlush = Instant.now();
 
     public LastSeenTracker(JdbcTemplate jdbc) {
@@ -40,6 +42,9 @@ public class LastSeenTracker {
             Instant now = Instant.now();
             dirtySessions.merge(token, new SessionSeen(deviceId, now, appVersion),
                 (old, nu) -> new SessionSeen(deviceId, now, nu.appVersion() != null ? nu.appVersion() : old.appVersion()));
+            bySession.merge(token, new Seen(now, appVersion),
+                (old, nu) -> new Seen(now, nu.appVersion() != null ? nu.appVersion() : old.appVersion()));
+            sessionDevice.put(token, deviceId);
             byDevice.merge(deviceId, new Seen(now, appVersion),
                 (old, nu) -> new Seen(now, nu.appVersion() != null ? nu.appVersion() : old.appVersion()));
         } catch (RuntimeException e) {
@@ -62,8 +67,24 @@ public class LastSeenTracker {
         return Optional.ofNullable(byDevice.get(deviceId));
     }
 
+    public Optional<Seen> getSession(String token) {
+        return Optional.ofNullable(bySession.get(token));
+    }
+
     public void forget(String token) {
         dirtySessions.remove(token);
+        bySession.remove(token);
+        sessionDevice.remove(token);
+    }
+
+    // All sessions of a device were ended.
+    public void forgetDevice(long deviceId) {
+        sessionDevice.entrySet().removeIf(e -> {
+            if (e.getValue() != deviceId) return false;
+            dirtySessions.remove(e.getKey());
+            bySession.remove(e.getKey());
+            return true;
+        });
     }
 
     @Scheduled(fixedDelay = 60_000)
