@@ -140,6 +140,97 @@ public class TerminalSessionService {
         }
     }
 
+    public record LateResult(String result) {}
+
+    // A card approval that reached the terminal after the kiosk gave up. Pays the order only when it is still
+    // CREATED, younger than late_approval_expiration_minutes (counted from order creation, server clock), and
+    // the amount matches. Anything else is ignored and the order is left as it is.
+    public LateResult lateApproval(String orderId, long orgId, BigDecimal amount, String approvalCode,
+                                   String rrn, String terminalId) {
+        String detail = "order=" + orderId + " amount=" + amount + " approvalCode=" + approvalCode
+            + " rrn=" + rrn + " terminalId=" + terminalId;
+
+        List<Map<String, Object>> rows = jdbc.queryForList("""
+            SELECT status, version, total_amount, currency, store_id, organization_id,
+                   TIMESTAMPDIFF(SECOND, created_at, NOW()) AS age_seconds
+            FROM orders WHERE id = ?
+            """, orderId);
+        if (rows.isEmpty() || ((Number) rows.get(0).get("organization_id")).longValue() != orgId) {
+            log.warn("Late approval ignored (order not found) {}", detail);
+            return new LateResult("IGNORED");
+        }
+        Map<String, Object> o = rows.get(0);
+
+        Integer already = jdbc.queryForObject(
+            "SELECT COUNT(*) FROM payments WHERE order_id = ? AND provider = 'terminal' AND provider_reference = ?",
+            Integer.class, orderId, rrn);
+        if (already != null && already > 0) {
+            log.info("Late approval repeated, already recorded {}", detail);
+            return new LateResult("PAID");
+        }
+
+        long limitSeconds = lateApprovalMinutes(orgId) * 60L;
+        long age = ((Number) o.get("age_seconds")).longValue();
+        BigDecimal total = (BigDecimal) o.get("total_amount");
+        if (!"CREATED".equals(o.get("status"))) {
+            log.warn("Late approval ignored (order status {}) {}", o.get("status"), detail);
+            return new LateResult("IGNORED");
+        }
+        if (age >= limitSeconds) {
+            log.warn("Late approval ignored (order {}s old, limit {}s) {}", age, limitSeconds, detail);
+            return new LateResult("IGNORED");
+        }
+        if (total.compareTo(amount) != 0) {
+            log.warn("Late approval ignored (order total {}) {}", total, detail);
+            return new LateResult("IGNORED");
+        }
+
+        int version = ((Number) o.get("version")).intValue();
+        boolean paid = orderRepository.markPaid(orderId, version, rrn, "terminal-late");
+        if (!paid) {
+            log.warn("Late approval ignored (order changed meanwhile) {}", detail);
+            return new LateResult("IGNORED");
+        }
+        orderRepository.recordPayment(orderId, "terminal", "PAID", rrn, approvalCode);
+
+        // Mark the order's latest terminal attempt (status stays as it is).
+        List<String> attempts = jdbc.queryForList(
+            "SELECT id FROM payment_attempts WHERE order_id = ? AND provider = 'terminal' ORDER BY created_at DESC LIMIT 1",
+            String.class, orderId);
+        if (!attempts.isEmpty()) {
+            Map<String, Object> notes = new java.util.LinkedHashMap<>();
+            notes.put("late_approval", true);
+            notes.put("rrn", rrn);
+            notes.put("terminalId", terminalId);
+            notes.put("amount", amount);
+            try {
+                jdbc.update("UPDATE payment_attempts SET auth_code = ?, notes = JSON_MERGE_PATCH(COALESCE(notes, JSON_OBJECT()), ?) WHERE id = ?",
+                    approvalCode, objectMapper.writeValueAsString(notes), attempts.get(0));
+            } catch (Exception e) {
+                log.warn("Late approval: could not annotate attempt: {}", e.getMessage());
+            }
+        }
+
+        sseRegistry.notifyPaid(orderId);
+        eventPublisher.publishEvent(new OrderPaidEvent(orderId, ((Number) o.get("store_id")).longValue(), (String) o.get("currency")));
+        log.info("Late approval paid the order {}", detail);
+        return new LateResult("PAID");
+    }
+
+    private int lateApprovalMinutes(long orgId) {
+        try {
+            String v = jdbc.query(
+                "SELECT value FROM system_properties WHERE `key` = 'late_approval_expiration_minutes' " +
+                "AND organization_id IN (0, ?) ORDER BY organization_id DESC LIMIT 1",
+                rs -> rs.next() ? rs.getString(1) : null, orgId);
+            if (v != null) {
+                int m = Integer.parseInt(v.trim());
+                if (m >= 1 && m <= 60) return m;
+            }
+        } catch (RuntimeException ignored) { }
+        return 3;
+    }
+
     public void cancel(String id) {
         int updated = jdbc.update(
             "UPDATE payment_attempts SET status='CANCELLED' WHERE id=? AND status='PENDING'",

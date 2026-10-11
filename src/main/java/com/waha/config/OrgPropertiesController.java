@@ -30,6 +30,20 @@ public class OrgPropertiesController {
             new PropertySpec("integer", "Most automatic log uploads one kiosk may send per hour (default 3)", "1–60"));
         KNOWN_KEYS.put("log_harvest_seconds",
             new PropertySpec("integer", "Seconds of log the kiosk collects for each automatic upload (default 30)", "10–240 seconds"));
+        KNOWN_KEYS.put("enable_logging",
+            new PropertySpec("boolean", "Kiosks of this org turn on trace logging and uploads (default off)", "true or false"));
+        KNOWN_KEYS.put("device_auto_restart_enabled",
+            new PropertySpec("boolean", "Kiosks restart the app on a schedule (default off)", "true or false"));
+        KNOWN_KEYS.put("device_auto_restart_hours",
+            new PropertySpec("decimal", "Hours between scheduled app restarts (default 2)", "0.25–168 hours"));
+        KNOWN_KEYS.put("device_auto_restart_wait_minutes",
+            new PropertySpec("integer", "Minutes to wait before re-checking when the kiosk is busy or the user taps Not now (default 3)", "1–60 minutes"));
+        KNOWN_KEYS.put("heartbeat_minutes",
+            new PropertySpec("integer", "Minutes between kiosk heartbeat calls; 0 turns device monitoring off (default 0)", "0–1440 minutes"));
+        KNOWN_KEYS.put("late_approval_expiration_minutes",
+            new PropertySpec("integer", "A card approval arriving after the kiosk gave up still pays an unpaid order if the order is younger than this (default 3)", "1–60 minutes"));
+        KNOWN_KEYS.put("terminal_timeout_seconds",
+            new PropertySpec("integer", "Seconds the kiosk waits for the card terminal; overrides the device setting (default 60)", "10–80 seconds"));
     }
 
     record PropertySpec(String type, String description, String constraints) {}
@@ -157,6 +171,24 @@ public class OrgPropertiesController {
                 yield (v.equals("true") || v.equals("false")) ? null
                     : "auto_log_upload_enabled must be 'true' or 'false'";
             }
+            case "enable_logging", "device_auto_restart_enabled" -> {
+                String v = value.trim().toLowerCase();
+                yield (v.equals("true") || v.equals("false")) ? null
+                    : key + " must be 'true' or 'false'";
+            }
+            case "device_auto_restart_hours" -> {
+                try {
+                    double v = Double.parseDouble(value.trim());
+                    if (v < 0.25 || v > 168) yield key + " must be between 0.25 and 168";
+                    yield null;
+                } catch (NumberFormatException e) {
+                    yield key + " must be a number";
+                }
+            }
+            case "device_auto_restart_wait_minutes" -> intInRange(key, value, 1, 60);
+            case "heartbeat_minutes"                -> intInRange(key, value, 0, 1440);
+            case "late_approval_expiration_minutes" -> intInRange(key, value, 1, 60);
+            case "terminal_timeout_seconds"         -> intInRange(key, value, 10, 80);
             case "max_log_uploads_per_hour" -> intInRange(key, value, 1, 60);
             case "log_harvest_seconds"      -> intInRange(key, value, 10, 240);
             default -> null; // free-form key — pass through

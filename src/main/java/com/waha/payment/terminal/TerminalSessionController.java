@@ -36,6 +36,32 @@ public class TerminalSessionController {
         }
     }
 
+    // Kiosk: the card was charged after the kiosk gave up. Body: { amount, approvalCode, rrn, terminalId }
+    // Reply: { "result": "PAID" | "IGNORED" } — the kiosk stops retrying on either.
+    @PostMapping("/orders/{orderId}/late-approval")
+    public ResponseEntity<?> lateApproval(@PathVariable String orderId,
+                                          @RequestBody Map<String, Object> body,
+                                          @RequestHeader(value = "Authorization", required = false) String auth) {
+        var session = sessionService.requireSession(auth);
+        sessionService.requirePermission(auth, com.waha.auth.Permission.PROCESS_ORDERS, session.storeId());
+        Object amountRaw = body.get("amount");
+        Object rrnRaw    = body.get("rrn");
+        if (amountRaw == null || rrnRaw == null || rrnRaw.toString().isBlank())
+            return ResponseEntity.badRequest().body(new ErrorResponse("amount and rrn are required"));
+        java.math.BigDecimal amount;
+        try {
+            amount = new java.math.BigDecimal(amountRaw.toString().trim());
+        } catch (NumberFormatException e) {
+            return ResponseEntity.badRequest().body(new ErrorResponse("amount must be a number"));
+        }
+        return ResponseEntity.ok(service.lateApproval(orderId, session.organizationId(), amount,
+            str(body.get("approvalCode")), rrnRaw.toString().trim(), str(body.get("terminalId"))));
+    }
+
+    private static String str(Object o) {
+        return o == null ? null : o.toString();
+    }
+
     // Terminal app: polls by id to track state (PENDING → CONFIRMED / TIMEOUT / CANCELLED).
     @GetMapping("/terminal-sessions/{id}")
     public ResponseEntity<?> get(@PathVariable String id,

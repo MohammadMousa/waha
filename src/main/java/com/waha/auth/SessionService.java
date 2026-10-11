@@ -20,13 +20,15 @@ public class SessionService {
     private final NamedParameterJdbcTemplate namedJdbc;
     private final UserRepository userRepository;
     private final RoleRepository roleRepository;
+    private final com.waha.device.LastSeenTracker lastSeen;
     private final SecureRandom random = new SecureRandom();
 
     // Tokens stay valid until explicit logout, revocation or account/session invalidation (Waha Rules: Auto-login).
     private static final Instant NO_EXPIRY = Instant.parse("9999-12-31T00:00:00Z");
 
     public SessionService(NamedParameterJdbcTemplate namedJdbc, UserRepository userRepository,
-                          RoleRepository roleRepository) {
+                          RoleRepository roleRepository, com.waha.device.LastSeenTracker lastSeen) {
+        this.lastSeen = lastSeen;
         this.namedJdbc = namedJdbc;
         this.userRepository = userRepository;
         this.roleRepository = roleRepository;
@@ -106,8 +108,10 @@ public class SessionService {
             }
         );
 
-        return results.stream().findFirst()
+        UserSession found = results.stream().findFirst()
             .orElseThrow(() -> new UnauthorizedException("Missing or invalid session"));
+        if (found.deviceId() != null) lastSeen.touch(found.token(), found.deviceId(), null);
+        return found;
     }
 
     public void setStore(String token, long storeId) {
@@ -125,6 +129,7 @@ public class SessionService {
     }
 
     public void deleteSession(String token) {
+        lastSeen.forget(token);
         namedJdbc.update("DELETE FROM user_sessions WHERE token = :token", Map.of("token", token));
     }
 

@@ -40,9 +40,12 @@ public class KioskAuthController {
     private final SessionService sessionService;
     private final BCryptPasswordEncoder encoder;
     private final PinLockoutService lockoutService;
+    private final LastSeenTracker lastSeen;
 
     public KioskAuthController(DeviceRepository deviceRepository, SessionService sessionService,
-                               BCryptPasswordEncoder encoder, PinLockoutService lockoutService) {
+                               BCryptPasswordEncoder encoder, PinLockoutService lockoutService,
+                               LastSeenTracker lastSeen) {
+        this.lastSeen = lastSeen;
         this.deviceRepository = deviceRepository;
         this.sessionService   = sessionService;
         this.encoder          = encoder;
@@ -108,6 +111,7 @@ public class KioskAuthController {
         String token = sessionService.createDeviceSession(deviceId);
         sessionService.setStore(token, storeId);
         sessionService.setMode(token, "KIOSK");
+        lastSeen.touchAndSave(token, deviceId, appVersion(body.get("appVersion")));
 
         Map<String, Object> resp = new LinkedHashMap<>();
         resp.put("token",          token);
@@ -119,10 +123,20 @@ public class KioskAuthController {
         return ResponseEntity.ok(resp);
     }
 
+    // The app version is optional: an older app that does not send it keeps working.
+    static String appVersion(Object raw) {
+        if (raw == null) return null;
+        String v = raw.toString().trim();
+        return v.isEmpty() ? null : (v.length() > 50 ? v.substring(0, 50) : v);
+    }
+
     @GetMapping("/me")
     public ResponseEntity<?> me(
-            @RequestHeader(value = "Authorization", required = false) String authHeader) {
+            @RequestHeader(value = "Authorization", required = false) String authHeader,
+            @RequestHeader(value = "X-App-Version", required = false) String appVersionHeader) {
         var session = sessionService.requireSession(authHeader);
+        if (session.deviceId() != null)
+            lastSeen.touch(session.token(), session.deviceId(), appVersion(appVersionHeader));
         var device  = deviceRepository.findById(session.deviceId());
         if (device.isEmpty())
             return ResponseEntity.status(401).body(new ErrorResponse("Device not found"));

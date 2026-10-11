@@ -18,6 +18,8 @@ import java.util.Map;
 @RequestMapping("/api/admin/reports")
 public class ReportsController {
 
+    private static final int MAX_PAGE_SIZE = 500;
+
     private final ReportsRepository reportsRepository;
     private final SessionService sessionService;
     private final ProductRepository productRepository;
@@ -85,7 +87,8 @@ public class ReportsController {
             @RequestParam(defaultValue = "10") int size) {
 
         sessionService.requirePermission(auth, Permission.VIEW_ALL_ORDERS, 1L);
-        if (size < 1 || size > 100) size = 10;
+        if (size < 1) size = 10;
+        if (size > MAX_PAGE_SIZE) size = MAX_PAGE_SIZE;
 
         try {
             if (from != null) LocalDate.parse(from);
@@ -121,7 +124,8 @@ public class ReportsController {
 
         sessionService.requirePermission(auth, Permission.VIEW_ALL_ORDERS, 1L);
 
-        if (size < 1 || size > 100) size = 10;
+        if (size < 1) size = 10;
+        if (size > MAX_PAGE_SIZE) size = MAX_PAGE_SIZE;
 
         if (from == null) from = LocalDate.now().minusDays(30).toString();
         if (to   == null) to   = LocalDate.now().toString();
