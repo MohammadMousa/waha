@@ -182,6 +182,30 @@ public class DeviceStatusController {
         return ResponseEntity.noContent().build();
     }
 
+    // Admin: disconnect several sessions of one device at once. Body: { "refs": ["...", "..."] }
+    // Unknown references (or ones of another device) are skipped. Reply: { "disconnected": n }
+    @PostMapping("/admin/devices/{id}/sessions/delete")
+    public ResponseEntity<?> disconnectMany(
+            @RequestHeader(value = "Authorization", required = false) String auth,
+            @PathVariable long id, @RequestBody Map<String, Object> body) {
+        UserSession session = sessionService.requireSession(auth);
+        sessionService.requirePermissionForOrg(session, Permission.MANAGE_DEVICES, session.organizationId());
+        if (!deviceInOrg(id, session.organizationId()))
+            return ResponseEntity.status(404).body(new ErrorResponse("Device not found"));
+
+        if (!(body.get("refs") instanceof List<?> raw) || raw.isEmpty())
+            return ResponseEntity.badRequest().body(new ErrorResponse("refs must be a non-empty list"));
+        if (raw.size() > 200)
+            return ResponseEntity.badRequest().body(new ErrorResponse("At most 200 sessions per request"));
+        List<String> refs = raw.stream().filter(Objects::nonNull).map(Object::toString).distinct().toList();
+
+        List<String> tokens = jdbc.queryForList(
+            "SELECT token FROM user_sessions WHERE device_id = :id AND SHA2(token, 256) IN (:refs)",
+            Map.of("id", id, "refs", refs), String.class);
+        for (String token : tokens) sessionService.deleteSession(token);
+        return ResponseEntity.ok(Map.of("disconnected", tokens.size()));
+    }
+
     private boolean deviceInOrg(long deviceId, long orgId) {
         Integer n = jdbc.queryForObject(
             "SELECT COUNT(*) FROM devices WHERE id = :id AND organization_id = :org",

@@ -23,7 +23,9 @@ public class ConfigController {
     // If orgId is provided, org-specific values override global ones on the same key.
     @GetMapping
     public ResponseEntity<?> get(@RequestParam(required = false) Long orgId) {
-        return ResponseEntity.ok(configService.findAllProperties(orgId != null ? orgId : 0L));
+        Map<String, String> props = new java.util.LinkedHashMap<>(configService.findAllProperties(orgId != null ? orgId : 0L));
+        props.put("api_level", String.valueOf(ApiLevel.CURRENT));
+        return ResponseEntity.ok(props);
     }
 
     // Admin — requires MANAGE_STORES. Updates a system property (always global, org=0).
