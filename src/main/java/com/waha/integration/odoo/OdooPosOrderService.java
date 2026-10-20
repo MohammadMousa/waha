@@ -103,10 +103,14 @@ public class OdooPosOrderService {
             line.put("name",                l.name());
             line.put("qty",                 l.quantity());
             line.put("price_unit",          l.unitPrice());
-            line.put("price_subtotal",      round2(l.lineTotal()));
-            line.put("price_subtotal_incl", java.math.BigDecimal.valueOf(l.lineTotal())
-                .multiply(java.math.BigDecimal.ONE.add(java.math.BigDecimal.valueOf(rate)))
-                .setScale(2, java.math.RoundingMode.HALF_UP).doubleValue());
+            // What the customer paid for the line: the price after offers, and Waha's own tax on it.
+            if (l.discountAmount() > 0) line.put("discount", l.discountPercent());
+            line.put("price_subtotal",      round2(l.netAmount()));
+            line.put("price_subtotal_incl", l.taxAmount() != null
+                ? round2(l.netAmount() + l.taxAmount())
+                : java.math.BigDecimal.valueOf(l.netAmount())
+                    .multiply(java.math.BigDecimal.ONE.add(java.math.BigDecimal.valueOf(rate)))
+                    .setScale(2, java.math.RoundingMode.HALF_UP).doubleValue());
             if (taxId != null) line.put("tax_ids", List.of(List.of(6, 0, List.of(taxId))));
             orderLines.add(List.of(0, 0, line));
         }

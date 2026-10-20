@@ -315,7 +315,20 @@ public class OdooOrderSyncService {
     }
 
     // odooProductId is null when the product could not be found in Odoo.
-    public record ResolvedLine(Long odooProductId, int quantity, double unitPrice, double lineTotal, String name) {}
+    // lineTotal is before any offer. discountAmount and netAmount (lineTotal - discount) are what the customer
+    // paid for the line; taxAmount is the tax Waha charged on the net amount, or null for orders queued before
+    // offers existed (the tax is then derived from the order's rate, as before).
+    public record ResolvedLine(Long odooProductId, int quantity, double unitPrice, double lineTotal, String name,
+                               double discountAmount, double netAmount, Double taxAmount) {
+        public ResolvedLine(Long odooProductId, int quantity, double unitPrice, double lineTotal, String name) {
+            this(odooProductId, quantity, unitPrice, lineTotal, name, 0.0, lineTotal, null);
+        }
+
+        // Odoo stores a discount as a percentage of the line; the exact money is sent in the line's subtotals.
+        public double discountPercent() {
+            return lineTotal > 0 ? Math.round(discountAmount / lineTotal * 10000.0) / 100.0 : 0.0;
+        }
+    }
 
     private List<ResolvedLine> resolveLines(ExternalSystem sys, SyncQueueItem item, JsonNode order) {
         List<ResolvedLine> lines = new ArrayList<>();
@@ -368,8 +381,11 @@ public class OdooOrderSyncService {
             int qty = lineNode.path("quantity").asInt();
             double unitPrice = lineNode.path("unitPrice").asDouble();
             double lineTotal = lineNode.path("lineTotal").asDouble(unitPrice * qty);
+            double discount = lineNode.path("discountAmount").asDouble(0.0);
+            double net = lineNode.path("netAmount").asDouble(lineTotal - discount);
+            Double lineTax = lineNode.hasNonNull("taxAmount") ? lineNode.path("taxAmount").asDouble() : null;
             lines.add(new ResolvedLine(odooProductId, qty, unitPrice, lineTotal,
-                lineNode.path("name").path("en").asText("Product")));
+                lineNode.path("name").path("en").asText("Product"), discount, net, lineTax));
         }
         return lines;
     }
@@ -389,6 +405,7 @@ public class OdooOrderSyncService {
             if (l.odooProductId() != null) line.put("product_id", l.odooProductId());
             line.put("product_uom_qty", l.quantity());
             line.put("price_unit",      l.unitPrice());
+            if (l.discountAmount() > 0) line.put("discount", l.discountPercent());
             line.put("name",            l.name());
             orderLines.add(List.of(0, 0, line));
         }

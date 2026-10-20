@@ -231,8 +231,12 @@ final class InvoicePdfRenderer {
 
             for (OrderItemView item : order.items()) {
                 String name  = InvoiceHtmlRenderer.extractName(item.name(), ar);
-                BigDecimal itax   = itemTax(item.lineTotal(), order.taxRate());
-                BigDecimal itotal = item.lineTotal() != null ? item.lineTotal().add(itax) : BigDecimal.ZERO;
+                BigDecimal itax   = item.taxAmount() != null ? item.taxAmount() : itemTax(item.lineTotal(), order.taxRate());
+                BigDecimal inet   = item.netAmount() != null ? item.netAmount() : item.lineTotal();
+                BigDecimal itotal = inet != null ? inet.add(itax) : BigDecimal.ZERO;
+                if (item.discountAmount() != null && item.discountAmount().signum() > 0) {
+                    name = name + "  (" + (ar ? "خصم " : "Discount ") + "-" + fmtAmt(item.discountAmount(), order.currency()) + ")";
+                }
                 String bc = item.barcode() != null ? item.barcode() : "";
 
                 // Use Latin font for non-Arabic product names and always for barcodes
@@ -305,7 +309,13 @@ final class InvoicePdfRenderer {
             int sumLa = ar ? Element.ALIGN_RIGHT : Element.ALIGN_LEFT;
             int sumVa = ar ? Element.ALIGN_LEFT  : Element.ALIGN_RIGHT;
 
-            sumRow(sumInner, t(ar ? "إجمالي الأسعار"                              : "Total costs",                ar), fmtAmt(order.subtotal(), order.currency()), fNormal, fNormalLat, sumLa, sumVa, false, false, C_ROW_ALT, ar);
+            boolean hasDiscount = order.discountAmount() != null && order.discountAmount().signum() > 0;
+            if (hasDiscount) {
+                sumRow(sumInner, t(ar ? "إجمالي الأسعار"                          : "Total costs",                ar), fmtAmt(order.subtotal().add(order.discountAmount()), order.currency()), fNormal, fNormalLat, sumLa, sumVa, false, false, C_ROW_ALT, ar);
+                sumRow(sumInner, t(ar ? "الخصم"                                    : "Discount",                   ar), "-" + fmtAmt(order.discountAmount(), order.currency()), fNormal, fNormalLat, sumLa, sumVa, false, false, null, ar);
+            } else {
+                sumRow(sumInner, t(ar ? "إجمالي الأسعار"                          : "Total costs",                ar), fmtAmt(order.subtotal(), order.currency()), fNormal, fNormalLat, sumLa, sumVa, false, false, C_ROW_ALT, ar);
+            }
             sumRow(sumInner, t(ar ? "ضريبة القيمة المضافة (" + taxPctStr + "%)"   : "Total taxes (" + taxPctStr + "%)", ar), fmtAmt(order.tax(),      order.currency()), fNormal, fNormalLat, sumLa, sumVa, false, false, null,      ar);
             sumRow(sumInner, t(ar ? "الإجمالي"                                     : "Grand total",                ar), fmtAmt(order.total(),    order.currency()), fTotal,  fNormalLat, sumLa, sumVa, true,  false, C_ROW_ALT, ar);
             sumRow(sumInner, t(ar ? "إجمالي المدفوعات"                             : "Total payments",             ar), fmtAmt(paidAmt,          order.currency()), fNormal, fNormalLat, sumLa, sumVa, false, false, null,      ar);

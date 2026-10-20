@@ -4,7 +4,7 @@ The backend reports which client-facing features it has in one number, `api_leve
 It is returned by the public config endpoint, `GET /api/config`, together with the other properties.
 
 ```json
-{ "default_language": "en", "api_level": "1", ... }
+{ "default_language": "en", "api_level": "2", ... }
 ```
 
 The value is a string holding a whole number.
@@ -42,8 +42,17 @@ endpoints that do not exist yet. `api_level` lets the client check first and hid
 |   | Late card approval for an order the kiosk gave up on | kiosk |
 |   | Organization settings: `heartbeat_minutes`, `late_approval_expiration_minutes`, `enable_logging`, `device_auto_restart_*`, `terminal_timeout_seconds` | admin, kiosk |
 |   | Orders and product sales reports accept a page size up to 500 | admin |
+| 2 | Offers (auto-applied promotions): admin offer management, discounts in cart quotes, orders and invoices, active offers for kiosk badges. See `docs/offers.md` | admin, kiosk |
 
 ## Endpoints per level
+
+### Level 2
+
+- `GET /api/admin/offers`, `GET /api/admin/offers/{id}`, `POST /api/admin/offers`, `PUT /api/admin/offers/{id}`,
+  `PATCH /api/admin/offers/{id}/enabled`, `DELETE /api/admin/offers/{id}`, `POST /api/admin/offers/preview`
+- `GET /api/stores/{storeId}/active-offers`
+- Cart quote, order creation and order reads also return discount fields (`discountAmount`, `netAmount`, `taxAmount`,
+  `offer` per line; `discountAmount`, `invoiceOffer` per order). Extra fields only: old clients keep working.
 
 ### Level 1
 

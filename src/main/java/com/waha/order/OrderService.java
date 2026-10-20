@@ -2,6 +2,8 @@ package com.waha.order;
 
 import com.waha.common.InvalidRequestException;
 import com.waha.invoice.QrHelper;
+import com.waha.offer.OfferPricing;
+import com.waha.offer.PricingEngine;
 import com.waha.order.dto.*;
 import com.waha.payment.PaymentAttemptRequest;
 import com.waha.payment.PaymentAttemptResult;
@@ -46,13 +48,16 @@ public class OrderService {
     private final ApplicationEventPublisher eventPublisher;
 
     private final com.waha.config.ConfigService configService;
+    private final OfferPricing offerPricing;
 
     public OrderService(OrderRepository orderRepository, ProductRepository productRepository,
                          StoreRepository storeRepository, PaymentProvider paymentProvider,
                          Map<String, RedirectPaymentProvider> redirectProviders,
                          PaymentSseRegistry sseRegistry,
                          ApplicationEventPublisher eventPublisher,
-                         com.waha.config.ConfigService configService) {
+                         com.waha.config.ConfigService configService,
+                         OfferPricing offerPricing) {
+        this.offerPricing = offerPricing;
         this.orderRepository = orderRepository;
         this.productRepository = productRepository;
         this.storeRepository = storeRepository;
@@ -63,7 +68,8 @@ public class OrderService {
         this.configService = configService;
     }
 
-    private record Totals(BigDecimal subtotal, BigDecimal tax, BigDecimal total, List<OrderItemView> items, Map<Long, Product> productsById) {}
+    private record Totals(BigDecimal subtotal, BigDecimal tax, BigDecimal total, List<OrderItemView> items,
+                          Map<Long, Product> productsById, PricingEngine.Result priced) {}
 
     private static long requireStoreId(Long storeId) {
         if (storeId == null) {
@@ -90,12 +96,12 @@ public class OrderService {
     // discrepancies across branches are a data-entry/business-team concern,
     // surfaced later via reporting over the products table directly, not a
     // real-time gate here.
-    private Totals computeTotals(List<OrderItemRequest> items, BigDecimal vatRate) {
+    private Totals computeTotals(long storeId, List<OrderItemRequest> items, BigDecimal vatRate) {
         List<Long> productIds = items.stream().map(OrderItemRequest::productId).toList();
         Map<Long, Product> productsById = productRepository.findByIds(productIds).stream()
             .collect(Collectors.toMap(Product::id, p -> p));
 
-        List<OrderItemView> itemViews = items.stream().map(i -> {
+        List<PricingEngine.Line> lines = items.stream().map(i -> {
             Product p = productsById.get(i.productId());
             if (p == null) {
                 throw new ProductNotSellableException("Product " + i.productId() + " does not exist");
@@ -103,19 +109,22 @@ public class OrderService {
             if (!p.active()) {
                 throw new ProductNotSellableException("Product " + p.name() + " is not currently sellable");
             }
-            BigDecimal lineTotal = p.price().multiply(BigDecimal.valueOf(i.quantity()));
-            return new OrderItemView(p.id(), p.barcode(), p.name(), i.quantity(), p.price(), lineTotal);
+            return new PricingEngine.Line(p.id(), i.quantity(), p.price());
         }).toList();
 
-        BigDecimal subtotal = itemViews.stream().map(OrderItemView::lineTotal).reduce(BigDecimal.ZERO, BigDecimal::add);
-        // Tax is rounded per line and summed, the way Odoo books it (its default "round per line"),
-        // so the amount charged always equals what Odoo posts when a POS session closes.
-        BigDecimal tax = itemViews.stream()
-            .map(line -> line.lineTotal().multiply(vatRate).setScale(2, RoundingMode.HALF_UP))
-            .reduce(BigDecimal.ZERO, BigDecimal::add);
-        BigDecimal total = subtotal.add(tax);
+        // Offers, discounts and tax (rounded per line on the discounted amount, the way Odoo books it, so the
+        // amount charged equals what Odoo posts when a POS session closes) come from one place.
+        PricingEngine.Result priced = offerPricing.price(storeId, lines, vatRate);
 
-        return new Totals(subtotal, tax, total, itemViews, productsById);
+        List<OrderItemView> itemViews = new java.util.ArrayList<>();
+        for (int i = 0; i < priced.lines().size(); i++) {
+            PricingEngine.PricedLine l = priced.lines().get(i);
+            Product p = productsById.get(l.productId());
+            itemViews.add(new OrderItemView(p.id(), p.barcode(), p.name(), l.quantity(), l.unitPrice(), l.lineTotal(),
+                l.discountAmount(), l.netAmount(), l.taxAmount(),
+                l.ownOffer() == null ? null : new AppliedOfferView(l.ownOffer().id(), l.ownOffer().name())));
+        }
+        return new Totals(priced.subtotal(), priced.tax(), priced.total(), itemViews, productsById, priced);
     }
 
     // Called after every scan so the Flutter cart screen shows a live,
@@ -123,8 +132,9 @@ public class OrderService {
     public QuoteResponse quote(QuoteRequest request) {
         long storeId = requireStoreId(request.storeId());
         StoreConfig store = storeRepository.getStoreConfig(storeId);
-        Totals totals = computeTotals(request.items(), store.vatRate());
-        return new QuoteResponse(totals.subtotal(), totals.tax(), totals.total(), totals.items());
+        Totals totals = computeTotals(storeId, request.items(), store.vatRate());
+        return new QuoteResponse(totals.subtotal(), totals.tax(), totals.total(), totals.items(),
+            totals.priced().discountAmount(), invoiceOffer(totals.priced()));
     }
 
     // request.orderId() is a UUID minted by the Flutter app the moment the
@@ -135,19 +145,24 @@ public class OrderService {
         long storeId = requireStoreId(request.storeId());
         String username = requireUsername(request.username());
         StoreConfig store = storeRepository.getStoreConfig(storeId);
-        Totals totals = computeTotals(request.items(), store.vatRate());
+        Totals totals = computeTotals(storeId, request.items(), store.vatRate());
 
         boolean wasCreated = orderRepository.createOrderIdempotent(
             request.orderId(), storeId, store.currency(), store.vatRate(), username, totals.subtotal(), totals.tax()
         );
 
         if (wasCreated) {
-            orderRepository.insertOrderItems(request.orderId(), request.items(), totals.productsById());
+            orderRepository.insertOrderItems(request.orderId(), totals.priced(), totals.productsById());
             long displayId = orderRepository.nextDisplayId(storeId);
             orderRepository.setDisplayId(request.orderId(), displayId);
         }
 
         return orderRepository.getOrderDetail(request.orderId(), wasCreated);
+    }
+
+    private static AppliedOfferView invoiceOffer(PricingEngine.Result priced) {
+        return priced.globalOffer() == null ? null
+            : new AppliedOfferView(priced.globalOffer().id(), priced.globalOffer().name());
     }
 
     public OrderResponse getOrder(String orderId) {

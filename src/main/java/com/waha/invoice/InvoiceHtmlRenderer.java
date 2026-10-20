@@ -148,11 +148,16 @@ final class InvoiceHtmlRenderer {
         StringBuilder itemRows = new StringBuilder();
         for (OrderItemView item : order.items()) {
             String name  = extractName(item.name(), ar);
-            BigDecimal tax   = itemTax(item.lineTotal(), order.taxRate());
-            BigDecimal total = item.lineTotal() != null ? item.lineTotal().add(tax) : BigDecimal.ZERO;
+            BigDecimal tax   = item.taxAmount() != null ? item.taxAmount() : itemTax(item.lineTotal(), order.taxRate());
+            BigDecimal net   = item.netAmount() != null ? item.netAmount() : item.lineTotal();
+            BigDecimal total = net != null ? net.add(tax) : BigDecimal.ZERO;
+            boolean discounted = item.discountAmount() != null && item.discountAmount().signum() > 0;
             String bc = item.barcode() != null ? item.barcode() : "";
             itemRows.append("<tr>")
-                .append("<td>").append(esc(name)).append("</td>")
+                .append("<td>").append(esc(name))
+                .append(discounted ? "<br><span style=\"font-size:.78em;color:#666\">" + (ar ? "خصم " : "Discount ")
+                    + "-" + fmtAmt(item.discountAmount(), order.currency()) + "</span>" : "")
+                .append("</td>")
                 .append("<td style=\"font-size:.78em;color:#666\">").append(esc(bc)).append("</td>")
                 .append("<td class=\"num\">").append(item.quantity()).append("</td>")
                 .append("<td class=\"num\">").append(fmtAmt(item.unitPrice(), order.currency())).append("</td>")
@@ -194,9 +199,13 @@ final class InvoiceHtmlRenderer {
         }
 
         // ── Summary ───────────────────────────────────────────────────────────────
+        boolean hasDiscount = order.discountAmount() != null && order.discountAmount().signum() > 0;
         String summarySection =
             "<div class=\"sum-wrap\"><table class=\"sum-tbl\">"
-            + sumRow(ar ? "إجمالي الأسعار" : "Total costs",      fmtAmt(order.subtotal(), order.currency()), false, false)
+            + (hasDiscount
+                ? sumRow(ar ? "إجمالي الأسعار" : "Total costs", fmtAmt(order.subtotal().add(order.discountAmount()), order.currency()), false, false)
+                  + sumRow(ar ? "الخصم" : "Discount", "-" + fmtAmt(order.discountAmount(), order.currency()), false, false)
+                : sumRow(ar ? "إجمالي الأسعار" : "Total costs", fmtAmt(order.subtotal(), order.currency()), false, false))
             + sumRow(ar ? "ضريبة القيمة المضافة (" + taxPct + "%)" : "Total taxes (" + taxPct + "%)", fmtAmt(order.tax(), order.currency()), false, false)
             + sumRow(ar ? "الإجمالي" : "Grand total",             fmtAmt(order.total(), order.currency()), true,  false)
             + sumRow(ar ? "إجمالي المدفوعات" : "Total payments",  fmtAmt(paidAmt,        order.currency()), false, false)

@@ -23,5 +23,7 @@ public record OrderResponse(
     String invoiceUrl,
     Instant createdAt,
     List<OrderItemView> items,
-    List<PaymentRecord> payments  // all payment attempts, newest first
+    List<PaymentRecord> payments,  // all payment attempts, newest first
+    BigDecimal discountAmount,     // total discount of the order (0 when no offer applied)
+    AppliedOfferView invoiceOffer  // invoice-level offer (null when none)
 ) {}

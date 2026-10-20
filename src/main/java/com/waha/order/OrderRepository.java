@@ -2,6 +2,8 @@ package com.waha.order;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.waha.order.dto.OrderItemRequest;
+import com.waha.offer.PricingEngine;
+import com.waha.order.dto.AppliedOfferView;
 import com.waha.order.dto.OrderItemView;
 import com.waha.order.dto.OrderResponse;
 import com.waha.payment.dto.PaymentRecord;
@@ -74,7 +76,8 @@ public class OrderRepository {
 
         this.orderItemsInsert = new SimpleJdbcInsert(jdbcTemplate)
             .withTableName("order_items")
-            .usingColumns("order_id", "product_id", "quantity", "unit_price");
+            .usingColumns("order_id", "product_id", "quantity", "unit_price", "discount_amount", "tax_amount")
+            .usingGeneratedKeyColumns("id");
 
         this.paymentsInsert = new SimpleJdbcInsert(jdbcTemplate)
             .withTableName("payments")
@@ -118,16 +121,36 @@ public class OrderRepository {
 
     // Only called when wasCreated=true - an idempotent hit means items were
     // already inserted the first time, inserting again would duplicate them.
-    public void insertOrderItems(String orderId, List<OrderItemRequest> items, Map<Long, Product> productsById) {
-        for (OrderItemRequest item : items) {
-            Product p = productsById.get(item.productId());
+    // Stores each line's discount and tax, one record per applied offer (with the offer's terms copied, so
+    // later edits never change history) and the order's total discount.
+    public void insertOrderItems(String orderId, PricingEngine.Result priced, Map<Long, Product> productsById) {
+        for (PricingEngine.PricedLine line : priced.lines()) {
+            Product p = productsById.get(line.productId());
             Map<String, Object> row = new HashMap<>();
             row.put("order_id", orderId);
             row.put("product_id", p.id());
-            row.put("quantity", item.quantity());
-            row.put("unit_price", p.price());
-            orderItemsInsert.execute(row);
+            row.put("quantity", line.quantity());
+            row.put("unit_price", line.unitPrice());
+            row.put("discount_amount", line.discountAmount());
+            row.put("tax_amount", line.taxAmount());
+            long itemId = orderItemsInsert.executeAndReturnKey(row).longValue();
+            if (line.ownOffer() != null) {
+                recordApplication(orderId, itemId, line.ownOffer(), line.ownDiscount());
+            }
         }
+        if (priced.globalOffer() != null) {
+            recordApplication(orderId, null, priced.globalOffer(), priced.globalDiscount());
+        }
+        if (priced.discountAmount().signum() > 0) {
+            jdbcTemplate.update("UPDATE orders SET discount_amount = ? WHERE id = ?", priced.discountAmount(), orderId);
+        }
+    }
+
+    private void recordApplication(String orderId, Long itemId, com.waha.offer.Offer o, BigDecimal discount) {
+        jdbcTemplate.update(
+            "INSERT INTO offer_applications (order_id, order_item_id, offer_id, offer_name, offer_type, discount_mode, " +
+            "discount_value, discount_amount) VALUES (?,?,?,?,?,?,?,?)",
+            orderId, itemId, o.id(), o.name(), o.type(), o.discountMode(), o.discountValue(), discount);
     }
 
     public boolean markPaid(String orderId, int expectedVersion, String paymentReference, String subStatus) {
@@ -238,7 +261,7 @@ public class OrderRepository {
         Map<String, Object> header;
         try {
             header = jdbcTemplate.queryForMap(
-                "SELECT o.display_id, o.store_id, o.status, o.subtotal_amount, o.tax_amount, o.total_amount, " +
+                "SELECT o.display_id, o.store_id, o.status, o.subtotal_amount, o.tax_amount, o.total_amount, o.discount_amount, " +
                 "o.payment_reference, o.currency, o.tax_rate, o.username, o.created_at, " +
                 "(SELECT p.provider FROM payments p WHERE p.order_id = o.id AND p.outcome = 'PAID' ORDER BY p.created_at DESC LIMIT 1) AS payment_method " +
                 "FROM orders o WHERE o.id = ?",
@@ -248,14 +271,29 @@ public class OrderRepository {
             throw new OrderNotFoundException("Order " + orderId + " not found");
         }
 
+        // Lines saved before offers existed have no stored tax: derive it from the order's rate, as before.
         List<OrderItemView> items = jdbcTemplate.query(
-            "SELECT oi.product_id, p.barcode, p.name, oi.quantity, oi.unit_price, (oi.quantity * oi.unit_price) AS line_total " +
-            "FROM order_items oi JOIN products p ON oi.product_id = p.id WHERE oi.order_id = ?",
-            (rs, i) -> new OrderItemView(
-                rs.getLong("product_id"), rs.getString("barcode"), parseJson(rs.getString("name")),
-                rs.getInt("quantity"), rs.getBigDecimal("unit_price"), rs.getBigDecimal("line_total")
-            ), orderId
+            "SELECT oi.product_id, p.barcode, p.name, oi.quantity, oi.unit_price, (oi.quantity * oi.unit_price) AS line_total, " +
+            "oi.discount_amount, " +
+            "COALESCE(oi.tax_amount, ROUND((oi.quantity * oi.unit_price - oi.discount_amount) * o.tax_rate, 2)) AS tax_amount, " +
+            "oa.offer_id AS offer_id, oa.offer_name AS offer_name " +
+            "FROM order_items oi JOIN products p ON oi.product_id = p.id JOIN orders o ON o.id = oi.order_id " +
+            "LEFT JOIN offer_applications oa ON oa.order_item_id = oi.id WHERE oi.order_id = ? ORDER BY oi.id",
+            (rs, i) -> {
+                BigDecimal lineTotal = rs.getBigDecimal("line_total");
+                BigDecimal discount = rs.getBigDecimal("discount_amount");
+                long offerId = rs.getLong("offer_id");
+                AppliedOfferView offer = rs.wasNull() ? null : new AppliedOfferView(offerId, rs.getString("offer_name"));
+                return new OrderItemView(
+                    rs.getLong("product_id"), rs.getString("barcode"), parseJson(rs.getString("name")),
+                    rs.getInt("quantity"), rs.getBigDecimal("unit_price"), lineTotal,
+                    discount, lineTotal.subtract(discount), rs.getBigDecimal("tax_amount"), offer);
+            }, orderId
         );
+
+        List<AppliedOfferView> invoiceOffers = jdbcTemplate.query(
+            "SELECT offer_id, offer_name FROM offer_applications WHERE order_id = ? AND order_item_id IS NULL ORDER BY id LIMIT 1",
+            (rs, i) -> new AppliedOfferView(rs.getLong(1), rs.getString(2)), orderId);
 
         // Exclude PENDING rows that were later resolved (same providerReference has a non-PENDING row).
         // PENDING with no follow-up (abandoned sessions) are also excluded from invoice display —
@@ -284,7 +322,9 @@ public class OrderRepository {
             configService.getPublicBaseUrl() + "/api/invoices/" + orderId,
             createdAt,
             items,
-            payments
+            payments,
+            (BigDecimal) header.get("discount_amount"),
+            invoiceOffers.isEmpty() ? null : invoiceOffers.get(0)
         );
     }
 

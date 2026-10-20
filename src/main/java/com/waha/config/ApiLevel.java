@@ -5,7 +5,7 @@ package com.waha.config;
 // docs/api-levels.md. A backend older than level 1 does not return the field at all (treat as 0).
 public final class ApiLevel {
 
-    public static final int CURRENT = 1;
+    public static final int CURRENT = 2;
 
     private ApiLevel() {}
 }
