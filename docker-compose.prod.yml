@@ -5,9 +5,12 @@ services:
     restart: always
     ports:
       - "80:80"
-    volumes:
-      - ./admin_build/web:/usr/share/nginx/html:ro
-      - ./nginx-admin.conf:/etc/nginx/conf.d/default.conf:ro
+      - "443:443"
+   volumes:
+      - ./admin_build/web:/usr/share/nginx/html:ro      # Keeps your dashboard UI files
+      - ./nginx/conf.d:/etc/nginx/conf.d                # New directory for SSL configs
+      - ./certbot/conf:/etc/letsencrypt                 # SSL certificates storage
+      - ./certbot/www:/var/www/certbot                  # Let's Encrypt validation webroot
     depends_on:
       - waha
     logging:
@@ -15,3 +18,10 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
+
+  certbot:
+    image: certbot/certbot
+    container_name: certbot
+    volumes:
+      - ./certbot/conf:/etc/letsencrypt
+      - ./certbot/www:/var/www/certbot

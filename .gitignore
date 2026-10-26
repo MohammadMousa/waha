@@ -39,3 +39,7 @@ FRONTEND_CONTEXT.md
 
 # Claude Code local settings
 .claude/
+
+# Certbot generated files & SSL keys
+certbot/conf/
+certbot/www/
