@@ -92,6 +92,7 @@ public class PosAuthController {
 
         lockoutService.recordEmployeeSuccess(employeeId);
         String token = sessionService.createEmployeeSession(employeeId);
+        sessionService.saveLoginInfo(token, body.get("sessionProperties"), req.getHeader("User-Agent"));
 
         Set<String> permissions = sessionService.resolveEmployeePermissionsUnified(employeeId);
         Map<String, Object> profile = employeeRepository.findProfileForSession(employeeId);

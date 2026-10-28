@@ -44,9 +44,12 @@ public class LastSeenTracker {
                 (old, nu) -> new SessionSeen(deviceId, now, nu.appVersion() != null ? nu.appVersion() : old.appVersion()));
             bySession.merge(token, new Seen(now, appVersion),
                 (old, nu) -> new Seen(now, nu.appVersion() != null ? nu.appVersion() : old.appVersion()));
-            sessionDevice.put(token, deviceId);
-            byDevice.merge(deviceId, new Seen(now, appVersion),
-                (old, nu) -> new Seen(now, nu.appVersion() != null ? nu.appVersion() : old.appVersion()));
+            // deviceId 0 = a dashboard or employee session: it has its own last seen, but no device.
+            if (deviceId > 0) {
+                sessionDevice.put(token, deviceId);
+                byDevice.merge(deviceId, new Seen(now, appVersion),
+                    (old, nu) -> new Seen(now, nu.appVersion() != null ? nu.appVersion() : old.appVersion()));
+            }
         } catch (RuntimeException e) {
             log.warn("Last-seen update skipped: {}", e.getMessage());
         }
@@ -113,8 +116,10 @@ public class LastSeenTracker {
         Timestamp at = Timestamp.from(s.at());
         jdbc.update("UPDATE user_sessions SET last_seen_at = ?, app_version = COALESCE(?, app_version) WHERE token = ?",
             at, s.appVersion(), token);
-        jdbc.update("UPDATE devices SET last_seen_at = ?, app_version = COALESCE(?, app_version) WHERE id = ?",
-            at, s.appVersion(), s.deviceId());
+        if (s.deviceId() > 0) {
+            jdbc.update("UPDATE devices SET last_seen_at = ?, app_version = COALESCE(?, app_version) WHERE id = ?",
+                at, s.appVersion(), s.deviceId());
+        }
     }
 
     // Global (organization 0) property, default 60.

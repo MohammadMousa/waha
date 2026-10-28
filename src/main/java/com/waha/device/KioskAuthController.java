@@ -109,6 +109,7 @@ public class KioskAuthController {
         long storeId  = auth.get().storeId();
 
         String token = sessionService.createDeviceSession(deviceId);
+        sessionService.saveLoginInfo(token, body.get("sessionProperties"), req.getHeader("User-Agent"));
         sessionService.setStore(token, storeId);
         sessionService.setMode(token, "KIOSK");
         lastSeen.touchAndSave(token, deviceId, appVersion(body.get("appVersion")));

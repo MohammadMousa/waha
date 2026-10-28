@@ -2,6 +2,8 @@ package com.waha.auth;
 
 import com.waha.common.ForbiddenException;
 import com.waha.common.UnauthorizedException;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Service;
 
@@ -16,6 +18,9 @@ import java.util.Set;
 
 @Service
 public class SessionService {
+
+    private static final Logger log = LoggerFactory.getLogger(SessionService.class);
+    private static final int DEFAULT_ACCOUNT_SESSIONS_CAP = 5;
 
     private final NamedParameterJdbcTemplate namedJdbc;
     private final UserRepository userRepository;
@@ -53,6 +58,7 @@ public class SessionService {
             "INSERT INTO user_sessions (token, user_id, expires_at) VALUES (:token, :userId, :expiresAt)",
             params
         );
+        enforceAccountCap("user_id", userId, token);
         return token;
     }
 
@@ -63,6 +69,7 @@ public class SessionService {
             "INSERT INTO user_sessions (token, employee_id, expires_at) VALUES (:token, :eid, :exp)",
             Map.of("token", token, "eid", employeeId, "exp", Timestamp.from(expiresAt))
         );
+        enforceAccountCap("employee_id", employeeId, token);
         return token;
     }
 
@@ -110,7 +117,7 @@ public class SessionService {
 
         UserSession found = results.stream().findFirst()
             .orElseThrow(() -> new UnauthorizedException("Missing or invalid session"));
-        if (found.deviceId() != null) lastSeen.touch(found.token(), found.deviceId(), null);
+        lastSeen.touch(found.token(), found.deviceId() != null ? found.deviceId() : 0L, null);
         return found;
     }
 
@@ -141,15 +148,76 @@ public class SessionService {
     }
 
     public int endEmployeeSessions(long employeeId) {
-        return namedJdbc.update("DELETE FROM user_sessions WHERE employee_id = :id", Map.of("id", employeeId));
+        return deleteSessionsWhere("employee_id = :id", Map.of("id", employeeId));
     }
 
     // exceptToken keeps the caller's own session, e.g. when users change their own password.
     public int endUserSessions(long userId, String exceptToken) {
-        return namedJdbc.update(
-            "DELETE FROM user_sessions WHERE user_id = :id AND device_id IS NULL AND employee_id IS NULL"
-                + (exceptToken != null ? " AND token <> :keep" : ""),
+        return deleteSessionsWhere(
+            "user_id = :id AND device_id IS NULL AND employee_id IS NULL" + (exceptToken != null ? " AND token <> :keep" : ""),
             exceptToken != null ? Map.of("id", userId, "keep", exceptToken) : Map.of("id", userId));
+    }
+
+    // Every other session of the same employee, keeping the caller's own.
+    public int endOtherEmployeeSessions(long employeeId, String exceptToken) {
+        return deleteSessionsWhere("employee_id = :id AND token <> :keep", Map.of("id", employeeId, "keep", exceptToken));
+    }
+
+    private int deleteSessionsWhere(String condition, Map<String, Object> params) {
+        List<String> tokens = namedJdbc.queryForList("SELECT token FROM user_sessions WHERE " + condition, params, String.class);
+        tokens.forEach(lastSeen::forget);
+        return namedJdbc.update("DELETE FROM user_sessions WHERE " + condition, params);
+    }
+
+    // What a login tells us about the client (OS, model, browser). Stored once, at login; never fails the login.
+    public void saveLoginInfo(String token, Object sessionProperties, String userAgent) {
+        try {
+            String json = SessionInfo.toJson(sessionProperties, userAgent);
+            if (json != null) {
+                namedJdbc.update("UPDATE user_sessions SET properties = :p WHERE token = :t", Map.of("p", json, "t", token));
+            }
+        } catch (RuntimeException e) {
+            log.warn("Could not save login info for a session: {}", e.getMessage());
+        }
+    }
+
+    // After a dashboard or employee login: if the account has more sessions than Account_Sessions_Cap,
+    // the ones with the oldest activity are ended. The new session is never one of them. Never fails the login.
+    private void enforceAccountCap(String column, long accountId, String newToken) {
+        try {
+            int cap = accountSessionsCap();
+            if (cap <= 0) return;
+            List<SessionInfo.Candidate> all = namedJdbc.query(
+                "SELECT token, created_at, last_seen_at FROM user_sessions WHERE " + column + " = :id",
+                Map.of("id", accountId), (rs, i) -> {
+                    String token = rs.getString("token");
+                    Timestamp created = rs.getTimestamp("created_at");
+                    Timestamp seen = rs.getTimestamp("last_seen_at");
+                    Instant lastSeenAt = seen != null ? seen.toInstant() : null;
+                    var mem = lastSeen.getSession(token);
+                    if (mem.isPresent() && (lastSeenAt == null || mem.get().at().isAfter(lastSeenAt))) lastSeenAt = mem.get().at();
+                    return new SessionInfo.Candidate(token, created != null ? created.toInstant() : null, lastSeenAt);
+                });
+            List<String> remove = SessionInfo.overCap(all, cap, newToken);
+            for (String token : remove) deleteSession(token);
+            if (!remove.isEmpty()) log.info("Account session cap ({}) ended {} old session(s) of {} {}", cap, remove.size(), column, accountId);
+        } catch (RuntimeException e) {
+            log.warn("Account session cap skipped: {}", e.getMessage());
+        }
+    }
+
+    // Global (organization 0) property Account_Sessions_Cap, default 5; 0 turns the cap off.
+    private int accountSessionsCap() {
+        try {
+            String v = namedJdbc.query(
+                "SELECT value FROM system_properties WHERE `key` = 'Account_Sessions_Cap' AND organization_id = 0 LIMIT 1",
+                rs -> rs.next() ? rs.getString(1) : null);
+            if (v != null) {
+                int n = Integer.parseInt(v.trim());
+                if (n >= 0 && n <= 1000) return n;
+            }
+        } catch (RuntimeException ignored) { }
+        return DEFAULT_ACCOUNT_SESSIONS_CAP;
     }
 
     // A device moved to another branch keeps working; its open tokens follow it to the new branch.

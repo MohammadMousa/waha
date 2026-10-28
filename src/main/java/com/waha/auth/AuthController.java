@@ -99,7 +99,7 @@ public class AuthController {
     }
 
     @PostMapping("/register")
-    public ResponseEntity<?> register(@RequestBody RegisterRequest request) {
+    public ResponseEntity<?> register(@RequestBody RegisterRequest request, HttpServletRequest req) {
         if (request.username() == null || request.username().isBlank() || request.password() == null || request.password().isBlank()) {
             return ResponseEntity.status(400).body(new ErrorResponse("username and password are required"));
         }
@@ -116,6 +116,7 @@ public class AuthController {
         String hash = passwordEncoder.encode(request.password());
         long userId = userRepository.create(request.username(), hash, orgId);
         String token = sessionService.createSession(userId);
+        sessionService.saveLoginInfo(token, request.sessionProperties(), req.getHeader("User-Agent"));
         if (mode != null) sessionService.setMode(token, mode);
         Long defStore = defaultStoreId(orgId);
         if (defStore != null) sessionService.setStore(token, defStore);
@@ -181,6 +182,7 @@ public class AuthController {
 
         long loginOrgId = request.organizationId() != null ? request.organizationId() : 1L;
         String token = sessionService.createSession(record.get().id());
+        sessionService.saveLoginInfo(token, request.sessionProperties(), req.getHeader("User-Agent"));
         // Prefer the user's own BRANCH role assignment; fall back to the org's default store.
         Long defStore = roleRepository.findAssignedBranchStoreId(record.get().id())
             .orElseGet(() -> defaultStoreId(loginOrgId));

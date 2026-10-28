@@ -98,6 +98,7 @@ Validation errors are returned per field and are also enforced by the API, not o
   and `offer` (id and name, or null). The reply also returns `discountAmount` (total) and `invoiceOffer` (or null).
   `subtotal`, `tax`, `total` keep their meaning (subtotal is net).
 - `POST /api/orders`: runs the same pricing again; any discount sent by the client is ignored.
+- Both `POST /api/orders/quote` and `POST /api/orders` answer HTTP 422 `{"error":"ORDER_TOTAL_NOT_POSITIVE","message":"Order total must be greater than zero"}` when the offers bring a non-empty cart to zero or less. No order is created.
 - `GET /api/orders/{id}`: lines and totals include the discounts.
 - `GET /api/stores/{id}/active-offers`: active offers of a store, for badges on product tiles.
 - The amount sent to the card terminal is always the server total.

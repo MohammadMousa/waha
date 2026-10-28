@@ -4,7 +4,7 @@ The backend reports which client-facing features it has in one number, `api_leve
 It is returned by the public config endpoint, `GET /api/config`, together with the other properties.
 
 ```json
-{ "default_language": "en", "api_level": "2", ... }
+{ "default_language": "en", "api_level": "3", ... }
 ```
 
 The value is a string holding a whole number.
@@ -43,8 +43,18 @@ endpoints that do not exist yet. `api_level` lets the client check first and hid
 |   | Organization settings: `heartbeat_minutes`, `late_approval_expiration_minutes`, `enable_logging`, `device_auto_restart_*`, `terminal_timeout_seconds` | admin, kiosk |
 |   | Orders and product sales reports accept a page size up to 500 | admin |
 | 2 | Offers (auto-applied promotions): admin offer management, discounts in cart quotes, orders and invoices, active offers for kiosk badges. See `docs/offers.md` | admin, kiosk |
+| 3 | Account sessions: list, disconnect one or several, sign out of the others, for dashboard users and employees; OS / model / browser of each session; cap on sessions per account. See `docs/account-sessions.md` | admin, client, kiosk |
+|   | Orders and quotes with a zero or negative total are refused (422, `ORDER_TOTAL_NOT_POSITIVE`) | kiosk, client |
 
 ## Endpoints per level
+
+### Level 3
+
+- `GET /api/admin/users/{id}/sessions`, `DELETE /api/admin/users/{id}/sessions/{ref}`, `POST /api/admin/users/{id}/sessions/delete`
+- `GET /api/admin/employees/{id}/sessions`, `DELETE /api/admin/employees/{id}/sessions/{ref}`, `POST /api/admin/employees/{id}/sessions/delete`
+- `GET /api/auth/me/sessions`, `DELETE /api/auth/me/sessions/{ref}`, `POST /api/auth/me/sessions/sign-out-others`
+- Device session rows also return `info`. Login bodies accept `sessionProperties` with `os`, `osVersion`, `model`, `browser`.
+- `POST /api/orders/quote` and `POST /api/orders` answer 422 `ORDER_TOTAL_NOT_POSITIVE` when the total is zero or less.
 
 ### Level 2
 

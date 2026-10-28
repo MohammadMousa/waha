@@ -37,6 +37,8 @@ public class OrderController {
             return ResponseEntity.status(400).body(new ErrorResponse(e.getMessage()));
         } catch (ProductNotSellableException e) {
             return ResponseEntity.status(409).body(new ErrorResponse(e.getMessage()));
+        } catch (OrderTotalNotPositiveException e) {
+            return totalNotPositive(e);
         }
     }
 
@@ -61,7 +63,14 @@ public class OrderController {
             return ResponseEntity.status(400).body(new ErrorResponse(e.getMessage()));
         } catch (ProductNotSellableException e) {
             return ResponseEntity.status(409).body(new ErrorResponse(e.getMessage()));
+        } catch (OrderTotalNotPositiveException e) {
+            return totalNotPositive(e);
         }
+    }
+
+    private static ResponseEntity<?> totalNotPositive(OrderTotalNotPositiveException e) {
+        return ResponseEntity.status(422).body(java.util.Map.of(
+            "error", OrderTotalNotPositiveException.CODE, "message", e.getMessage()));
     }
 
     // id is the UUID minted at checkout time - unguessable, so no separate

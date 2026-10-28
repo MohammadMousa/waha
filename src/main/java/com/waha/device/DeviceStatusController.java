@@ -131,7 +131,7 @@ public class DeviceStatusController {
 
         List<Map<String, Object>> rows = jdbc.query("""
             SELECT us.token, SHA2(us.token, 256) AS ref, us.created_at, us.last_seen_at, us.app_version,
-                   us.mode, us.store_id, s.name AS store_name
+                   us.mode, us.store_id, s.name AS store_name, us.properties
             FROM user_sessions us LEFT JOIN stores s ON s.id = us.store_id
             WHERE us.device_id = :id
             """, Map.of("id", id), (rs, i) -> {
@@ -153,6 +153,7 @@ public class DeviceStatusController {
                 long sid = rs.getLong("store_id");
                 m.put("storeId",    rs.wasNull() ? null : sid);
                 m.put("storeName",  rs.getString("store_name"));
+                m.put("info",       parseInfo(rs.getString("properties")));
                 return m;
             });
         // Newest activity first (a session never seen sorts by creation time).
@@ -204,6 +205,17 @@ public class DeviceStatusController {
             Map.of("id", id, "refs", refs), String.class);
         for (String token : tokens) sessionService.deleteSession(token);
         return ResponseEntity.ok(Map.of("disconnected", tokens.size()));
+    }
+
+    private static final com.fasterxml.jackson.databind.ObjectMapper INFO_MAPPER = new com.fasterxml.jackson.databind.ObjectMapper();
+
+    private static Map<String, Object> parseInfo(String json) {
+        if (json == null || json.isBlank()) return null;
+        try {
+            return INFO_MAPPER.readValue(json, new com.fasterxml.jackson.core.type.TypeReference<LinkedHashMap<String, Object>>() {});
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     private boolean deviceInOrg(long deviceId, long orgId) {

@@ -115,6 +115,9 @@ public class OrderService {
         // Offers, discounts and tax (rounded per line on the discounted amount, the way Odoo books it, so the
         // amount charged equals what Odoo posts when a POS session closes) come from one place.
         PricingEngine.Result priced = offerPricing.price(storeId, lines, vatRate);
+        if (!lines.isEmpty() && priced.total().signum() <= 0) {
+            throw new OrderTotalNotPositiveException();
+        }
 
         List<OrderItemView> itemViews = new java.util.ArrayList<>();
         for (int i = 0; i < priced.lines().size(); i++) {
