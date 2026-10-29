@@ -45,6 +45,10 @@ public class OfferRepository {
         byStore.clear();
     }
 
+    public int cacheSize() {
+        return byStore.size();
+    }
+
     private List<Offer> queryForStore(long storeId) {
         List<Offer> base = jdbc.query("""
             SELECT o.* FROM offers o

@@ -62,4 +62,12 @@ class SessionInfoTest {
         assertTrue(SessionInfo.overCap(sessions, 0, "new").isEmpty());
         assertTrue(SessionInfo.overCap(sessions, 5, "new").isEmpty());
     }
+
+    @Test
+    void appVersionIsTrimmedCutAndOptional() {
+        assertNull(SessionInfo.appVersion(null));
+        assertNull(SessionInfo.appVersion("   "));
+        assertEquals("1.0.1", SessionInfo.appVersion(" 1.0.1 "));
+        assertEquals(50, SessionInfo.appVersion("9".repeat(80)).length());
+    }
 }

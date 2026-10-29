@@ -35,6 +35,22 @@ public class ConfigService {
         return resolved;
     }
 
+    // Forces the next read to go back to the settings (used by the System Configuration cache actions).
+    public void clearPublicBaseUrlCache() {
+        cachedPublicBaseUrl = null;
+    }
+
+    public boolean isPublicBaseUrlCached() {
+        return cachedPublicBaseUrl != null;
+    }
+
+    // One global (organization 0) value, or null when the row does not exist.
+    public String getGlobalProperty(String key) {
+        return jdbc.query(
+            "SELECT value FROM system_properties WHERE `key` = ? AND organization_id = 0 LIMIT 1",
+            rs -> rs.next() ? rs.getString(1) : null, key);
+    }
+
     public void setPublicBaseUrl(String url) {
         jdbc.update(
             "INSERT INTO system_properties (organization_id, `key`, value, description) VALUES (0, 'publicBaseUrl', ?, '') " +

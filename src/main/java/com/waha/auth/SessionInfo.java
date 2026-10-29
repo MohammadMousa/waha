@@ -46,6 +46,13 @@ final class SessionInfo {
         }
     }
 
+    // The app version is optional: trimmed and cut at 50 characters; blank means not sent.
+    static String appVersion(Object raw) {
+        if (raw == null) return null;
+        String v = raw.toString().trim();
+        return v.isEmpty() ? null : (v.length() > 50 ? v.substring(0, 50) : v);
+    }
+
     private static String clean(Object v) {
         if (v == null) return null;
         String s = v.toString().replaceAll("\\p{Cntrl}", " ").trim();

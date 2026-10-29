@@ -90,6 +90,15 @@ public class LastSeenTracker {
         });
     }
 
+    // How many sessions have a last-seen time not yet written to the database.
+    public int pendingCount() {
+        return dirtySessions.size();
+    }
+
+    public Instant lastFlushAt() {
+        return lastFlush;
+    }
+
     @Scheduled(fixedDelay = 60_000)
     public void flushIfDue() {
         if (Instant.now().isBefore(lastFlush.plusSeconds(flushMinutes() * 60L))) return;

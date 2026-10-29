@@ -183,6 +183,7 @@ public class AuthController {
         long loginOrgId = request.organizationId() != null ? request.organizationId() : 1L;
         String token = sessionService.createSession(record.get().id());
         sessionService.saveLoginInfo(token, request.sessionProperties(), req.getHeader("User-Agent"));
+        sessionService.saveAppVersionAtLogin(token, request.appVersion());
         // Prefer the user's own BRANCH role assignment; fall back to the org's default store.
         Long defStore = roleRepository.findAssignedBranchStoreId(record.get().id())
             .orElseGet(() -> defaultStoreId(loginOrgId));
@@ -235,9 +236,11 @@ public class AuthController {
     }
 
     @GetMapping("/me")
-    public ResponseEntity<?> me(@RequestHeader(value = "Authorization", required = false) String authHeader) {
+    public ResponseEntity<?> me(@RequestHeader(value = "Authorization", required = false) String authHeader,
+                                @RequestHeader(value = "X-App-Version", required = false) String appVersionHeader) {
         try {
             UserSession session = sessionService.requireSession(authHeader);
+            sessionService.noteAppVersion(session, appVersionHeader);
             User user = userRepository.findById(session.userId())
                 .orElseThrow(() -> new UnauthorizedException("Missing or invalid session"));
             Set<String> permissions = sessionService.resolvePermissions(session.userId(), session.storeId());

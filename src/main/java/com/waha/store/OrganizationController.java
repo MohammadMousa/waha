@@ -20,16 +20,33 @@ public class OrganizationController {
         this.sessionService = sessionService;
     }
 
-    public record OrgSummary(long id, String name) {}
+    public record OrgSummary(long id, String name, String slug) {}
 
     @GetMapping
-    public List<OrgSummary> list(
-            @RequestHeader(value = "Authorization", required = false) String auth) {
+    public org.springframework.http.ResponseEntity<List<OrgSummary>> list(
+            @RequestHeader(value = "Authorization", required = false) String auth,
+            @RequestParam(required = false) String search,
+            @RequestParam(required = false) Integer page,
+            @RequestParam(required = false) Integer size) {
         sessionService.requirePermission(auth, Permission.MANAGE_STORES, 1L);
-        return jdbc.query(
-            "SELECT id, name FROM organizations ORDER BY id",
-            Map.of(),
-            (rs, i) -> new OrgSummary(rs.getLong("id"), rs.getString("name"))
+        // search (name or slug), page and size are optional; without them every organization is returned, as before.
+        boolean hasSearch = search != null && !search.isBlank();
+        String where = hasSearch ? " WHERE name LIKE :q OR slug LIKE :q" : "";
+        Map<String, Object> params = new java.util.HashMap<>();
+        if (hasSearch) params.put("q", "%" + search.trim() + "%");
+        Long total = jdbc.queryForObject("SELECT COUNT(*) FROM organizations" + where, params, Long.class);
+        String limit = "";
+        if (page != null || size != null) {
+            int s = Math.min(200, Math.max(1, size == null ? 50 : size));
+            params.put("limit", s);
+            params.put("offset", (long) Math.max(0, page == null ? 0 : page) * s);
+            limit = " LIMIT :limit OFFSET :offset";
+        }
+        List<OrgSummary> items = jdbc.query(
+            "SELECT id, name, slug FROM organizations" + where + " ORDER BY id" + limit,
+            params,
+            (rs, i) -> new OrgSummary(rs.getLong("id"), rs.getString("name"), rs.getString("slug"))
         );
+        return org.springframework.http.ResponseEntity.ok().header("X-Total-Count", String.valueOf(total == null ? 0 : total)).body(items);
     }
 }

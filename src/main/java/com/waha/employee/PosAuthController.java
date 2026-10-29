@@ -93,6 +93,7 @@ public class PosAuthController {
         lockoutService.recordEmployeeSuccess(employeeId);
         String token = sessionService.createEmployeeSession(employeeId);
         sessionService.saveLoginInfo(token, body.get("sessionProperties"), req.getHeader("User-Agent"));
+        sessionService.saveAppVersionAtLogin(token, body.get("appVersion"));
 
         Set<String> permissions = sessionService.resolveEmployeePermissionsUnified(employeeId);
         Map<String, Object> profile = employeeRepository.findProfileForSession(employeeId);
@@ -130,10 +131,12 @@ public class PosAuthController {
 
     @GetMapping("/me")
     public ResponseEntity<?> me(
-            @RequestHeader(value = "Authorization", required = false) String authHeader) {
+            @RequestHeader(value = "Authorization", required = false) String authHeader,
+            @RequestHeader(value = "X-App-Version", required = false) String appVersionHeader) {
         var sessionOpt = sessionService.tryResolveSession(authHeader);
         if (sessionOpt.isEmpty() || sessionOpt.get().employeeId() == null)
             return ResponseEntity.status(401).body(new ErrorResponse("Invalid or expired token"));
+        sessionService.noteAppVersion(sessionOpt.get(), appVersionHeader);
 
         long employeeId = sessionOpt.get().employeeId();
         Set<String> permissions = sessionService.resolveEmployeePermissionsUnified(employeeId);

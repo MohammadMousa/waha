@@ -39,6 +39,14 @@ Logins (`POST /api/auth/login`, `/api/pos/auth/login`, `/api/kiosk/auth/login`) 
 the keys `os`, `osVersion`, `model` and `browser`. Other keys are ignored, values are cut at 100 characters.
 For a browser login the browser and OS are read from the user agent when not sent. Stored once, at login.
 
+## App version
+
+`appVersion` (top-level string in the login body, trimmed, cut at 50 characters) is saved with the session at
+`POST /api/auth/login` and `POST /api/pos/auth/login`, as the kiosk already does at its login.
+`GET /api/auth/me` and `GET /api/pos/auth/me` also read the optional `X-App-Version` header, which is allowed in
+CORS. Header values are held in memory and written in batches, so frequent token checks do not add database writes.
+See `docs/last-seen-and-request-load.md`.
+
 ## Cap
 
 System property `Account_Sessions_Cap` (global, organization 0), default 5, `0` = off. When a dashboard user

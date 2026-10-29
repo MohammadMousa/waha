@@ -22,7 +22,7 @@ public class CorsConfig implements WebMvcConfigurer {
         registry.addMapping("/api/**")
             .allowedOriginPatterns(origins)
             .allowedMethods(methods)
-            .allowedHeaders("Authorization", "Content-Type", "Accept")
+            .allowedHeaders("Authorization", "Content-Type", "Accept", "X-App-Version", "X-Organization-Id")
             .exposedHeaders("Authorization");
         // Public resource serving — no auth headers needed, GET only.
         registry.addMapping("/resource/**")

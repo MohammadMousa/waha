@@ -30,6 +30,19 @@ public class PinLockoutService {
         this.jdbc = jdbc;
     }
 
+    // Super-admin action: lifts every lockout. Returns how many lockouts were cleared.
+    public int clearAll() {
+        int n = employeeMap.size() + deviceMap.size() + userMap.size() + unknownMap.size() + ipMap.size();
+        employeeMap.clear();
+        deviceMap.clear();
+        userMap.clear();
+        unknownMap.clear();
+        ipMap.clear();
+        n += jdbc.update("UPDATE employees SET locked_until = NULL WHERE locked_until IS NOT NULL");
+        n += jdbc.update("UPDATE devices SET locked_until = NULL WHERE locked_until IS NOT NULL");
+        return n;
+    }
+
     // ── Employees ─────────────────────────────────────────────────────────────
 
     public boolean isEmployeeLocked(long id)    { return isLocked(id, employeeMap, "employees"); }

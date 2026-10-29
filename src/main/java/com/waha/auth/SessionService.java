@@ -1,11 +1,17 @@
 package com.waha.auth;
 
 import com.waha.common.ForbiddenException;
+import com.waha.common.InvalidRequestException;
+import com.waha.common.OrganizationRequiredException;
 import com.waha.common.UnauthorizedException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Service;
+
+import jakarta.servlet.http.HttpServletRequest;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
 import java.security.SecureRandom;
 import java.sql.Timestamp;
@@ -118,7 +124,32 @@ public class SessionService {
         UserSession found = results.stream().findFirst()
             .orElseThrow(() -> new UnauthorizedException("Missing or invalid session"));
         lastSeen.touch(found.token(), found.deviceId() != null ? found.deviceId() : 0L, null);
-        return found;
+        return applyOrganizationScope(found);
+    }
+
+    // A super-admin (organization 0) works inside one organization by sending X-Organization-Id on each call; the
+    // session then acts as that organization and every scoped call follows. Nothing is stored on the session.
+    // Without the header a super-admin cannot write (reads just return empty lists).
+    private UserSession applyOrganizationScope(UserSession s) {
+        if (!s.isUserSession()) return s;
+        HttpServletRequest req = currentRequest();
+        if (req == null) return s;
+        Long wanted = OrganizationScope.parse(req.getHeader(OrganizationScope.HEADER));
+        if (wanted != null && wanted != s.organizationId()) {
+            if (!resolvePermissions(s.userId(), null).contains(Permission.MANAGE_SYSTEM.name()))
+                throw new ForbiddenException("Organization not available");
+            Integer n = namedJdbc.queryForObject("SELECT COUNT(*) FROM organizations WHERE id = :id",
+                Map.of("id", wanted), Integer.class);
+            if (n == null || n == 0) throw new InvalidRequestException("Unknown organization: " + wanted);
+            return new UserSession(s.token(), s.userId(), s.employeeId(), s.deviceId(), s.storeId(), s.mode(), wanted);
+        }
+        if (s.organizationId() == 0 && OrganizationScope.writeNeedsOrganization(req.getMethod(), req.getRequestURI()))
+            throw new OrganizationRequiredException();
+        return s;
+    }
+
+    private static HttpServletRequest currentRequest() {
+        return RequestContextHolder.getRequestAttributes() instanceof ServletRequestAttributes a ? a.getRequest() : null;
     }
 
     public void setStore(String token, long storeId) {
@@ -167,6 +198,18 @@ public class SessionService {
         List<String> tokens = namedJdbc.queryForList("SELECT token FROM user_sessions WHERE " + condition, params, String.class);
         tokens.forEach(lastSeen::forget);
         return namedJdbc.update("DELETE FROM user_sessions WHERE " + condition, params);
+    }
+
+    // Login: the app version is written straight away (with the first last-seen time) for dashboard and employee sessions.
+    public void saveAppVersionAtLogin(String token, Object appVersion) {
+        String v = SessionInfo.appVersion(appVersion);
+        if (v != null) lastSeen.touchAndSave(token, 0L, v);
+    }
+
+    // Token check with the optional X-App-Version header: memory only, written to the database in batches.
+    public void noteAppVersion(UserSession session, String appVersion) {
+        String v = SessionInfo.appVersion(appVersion);
+        if (v != null) lastSeen.touch(session.token(), session.deviceId() != null ? session.deviceId() : 0L, v);
     }
 
     // What a login tells us about the client (OS, model, browser). Stored once, at login; never fails the login.
