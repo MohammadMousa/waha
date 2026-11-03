@@ -2,7 +2,9 @@ package com.waha.product;
 
 import com.waha.auth.SessionService;
 import com.waha.common.ErrorResponse;
+import com.waha.pricing.VatPricing;
 import com.waha.product.dto.ProductListResponse;
+import com.waha.product.dto.ProductView;
 import com.waha.product.dto.ProductSyncResponse;
 import com.waha.resource.ResourceRepository;
 import com.waha.store.StoreRepository;
@@ -31,13 +33,16 @@ public class ProductController {
     private final StoreRepository storeRepository;
     private final SessionService sessionService;
     private final ResourceRepository resourceRepository;
+    private final VatPricing vatPricing;
 
     public ProductController(ProductRepository productRepository, StoreRepository storeRepository,
-                              SessionService sessionService, ResourceRepository resourceRepository) {
+                              SessionService sessionService, ResourceRepository resourceRepository,
+                              VatPricing vatPricing) {
         this.productRepository = productRepository;
         this.storeRepository = storeRepository;
         this.sessionService = sessionService;
         this.resourceRepository = resourceRepository;
+        this.vatPricing = vatPricing;
     }
 
     // Discovery/browsing. storeId is optional - an explicit value still
@@ -63,7 +68,7 @@ public class ProductController {
         int cappedSize = Math.min(Math.max(size, 1), MAX_PAGE_SIZE);
         long companyId = storeRepository.findCompanyId(resolvedStoreId);
         var result = productRepository.browseByStore(companyId, categoryId, page, cappedSize);
-        return ResponseEntity.ok(new ProductListResponse(result.products(), page, cappedSize, result.hasMore()));
+        return ResponseEntity.ok(new ProductListResponse(views(result.products(), resolvedStoreId, companyId), page, cappedSize, result.hasMore()));
     }
 
     // Product detail page - tapping an item in the browse list above. Not
@@ -88,7 +93,9 @@ public class ProductController {
         resp.put("barcodes",        barcodes);
         resp.put("name",            product.get().name());
         resp.put("description",     product.get().description());
+        // price stays the stored price without VAT (the edit form saves it back); priceWithVat is for display.
         resp.put("price",           product.get().price());
+        resp.put("priceWithVat",    VatPricing.withVat(product.get().price(), vatPricing.organizationVatRate(product.get().companyId())));
         resp.put("active",          product.get().active());
         resp.put("companyId",       product.get().companyId());
         resp.put("publicListed",    product.get().publicListed());
@@ -120,7 +127,7 @@ public class ProductController {
         if (!product.get().active()) {
             return ResponseEntity.status(409).body(new ErrorResponse("Product is not currently sellable"));
         }
-        return ResponseEntity.ok(product.get());
+        return ResponseEntity.ok(views(List.of(product.get()), resolvedStoreId, companyId).get(0));
     }
 
     // Name search. Same scope / session-resolution rules as browse above.
@@ -142,7 +149,7 @@ public class ProductController {
         int cappedSize = Math.min(Math.max(size, 1), MAX_PAGE_SIZE);
         long companyId = storeRepository.findCompanyId(resolvedStoreId);
         var result = productRepository.searchByStore(companyId, q.trim(), page, cappedSize);
-        return ResponseEntity.ok(new ProductListResponse(result.products(), page, cappedSize, result.hasMore()));
+        return ResponseEntity.ok(new ProductListResponse(views(result.products(), resolvedStoreId, companyId), page, cappedSize, result.hasMore()));
     }
 
     // Delta sync for an offline local catalog cache, scoped to one store's
@@ -163,6 +170,20 @@ public class ProductController {
 
         long companyId = storeRepository.findCompanyId(resolvedStoreId);
         Instant syncedAt = Instant.now();
-        return ResponseEntity.ok(new ProductSyncResponse(syncedAt, productRepository.resolveEffectiveCatalog(companyId, since)));
+        var rate = storeRepository.getStoreConfig(resolvedStoreId).vatRate();
+        boolean withVat = vatPricing.showWithVat(companyId);
+        var items = productRepository.resolveEffectiveCatalog(companyId, since).stream().map(i -> {
+            var gross = VatPricing.withVat(i.price(), rate);
+            return new com.waha.product.dto.ProductSyncItem(i.id(), i.barcode(), i.name(), i.description(),
+                withVat ? gross : i.price(), i.active(), i.imageResourceId(), i.updatedAt(), gross);
+        }).toList();
+        return ResponseEntity.ok(new ProductSyncResponse(syncedAt, items));
+    }
+
+    // Customer-facing price fields: with VAT unless the organization turned that off (prices_exclude_vat).
+    private List<ProductView> views(List<Product> products, long storeId, long companyId) {
+        var rate = storeRepository.getStoreConfig(storeId).vatRate();
+        boolean withVat = vatPricing.showWithVat(companyId);
+        return products.stream().map(p -> ProductView.of(p, VatPricing.withVat(p.price(), rate), withVat)).toList();
     }
 }

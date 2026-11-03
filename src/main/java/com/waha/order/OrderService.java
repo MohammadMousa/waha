@@ -49,6 +49,7 @@ public class OrderService {
 
     private final com.waha.config.ConfigService configService;
     private final OfferPricing offerPricing;
+    private final com.waha.pricing.VatPricing vatPricing;
 
     public OrderService(OrderRepository orderRepository, ProductRepository productRepository,
                          StoreRepository storeRepository, PaymentProvider paymentProvider,
@@ -56,8 +57,10 @@ public class OrderService {
                          PaymentSseRegistry sseRegistry,
                          ApplicationEventPublisher eventPublisher,
                          com.waha.config.ConfigService configService,
-                         OfferPricing offerPricing) {
+                         OfferPricing offerPricing,
+                         com.waha.pricing.VatPricing vatPricing) {
         this.offerPricing = offerPricing;
+        this.vatPricing = vatPricing;
         this.orderRepository = orderRepository;
         this.productRepository = productRepository;
         this.storeRepository = storeRepository;
@@ -136,8 +139,9 @@ public class OrderService {
         long storeId = requireStoreId(request.storeId());
         StoreConfig store = storeRepository.getStoreConfig(storeId);
         Totals totals = computeTotals(storeId, request.items(), store.vatRate());
-        return new QuoteResponse(totals.subtotal(), totals.tax(), totals.total(), totals.items(),
+        QuoteResponse quote = new QuoteResponse(totals.subtotal(), totals.tax(), totals.total(), totals.items(),
             totals.priced().discountAmount(), invoiceOffer(totals.priced()));
+        return vatPricing.forQuote(quote, storeRepository.findCompanyId(storeId), store.vatRate());
     }
 
     // request.orderId() is a UUID minted by the Flutter app the moment the
@@ -160,7 +164,7 @@ public class OrderService {
             orderRepository.setDisplayId(request.orderId(), displayId);
         }
 
-        return orderRepository.getOrderDetail(request.orderId(), wasCreated);
+        return display(orderRepository.getOrderDetail(request.orderId(), wasCreated));
     }
 
     private static AppliedOfferView invoiceOffer(PricingEngine.Result priced) {
@@ -168,8 +172,18 @@ public class OrderService {
             : new AppliedOfferView(priced.globalOffer().id(), priced.globalOffer().name());
     }
 
+    // What customer apps and the dashboard show: line prices with VAT unless the organization turned that off.
     public OrderResponse getOrder(String orderId) {
+        return display(orderRepository.getOrderDetail(orderId, true));
+    }
+
+    // Stored values without the VAT display change, for invoices (they show net, tax and total themselves).
+    public OrderResponse getOrderForInvoice(String orderId) {
         return orderRepository.getOrderDetail(orderId, true);
+    }
+
+    private OrderResponse display(OrderResponse order) {
+        return vatPricing.forOrder(order, storeRepository.findCompanyId(order.storeId()));
     }
 
     public List<OrderRepository.OrderSummary> listUserOrders(String username, long storeId, int page, int size) {
@@ -211,7 +225,7 @@ public class OrderService {
         orderRepository.recordPayment(orderId, result.provider(), result.status().name(), result.providerReference(), result.detail());
 
         if (result.status() != PaymentStatus.PAID) {
-            return new PayOrderResponse(false, result.status().name(), result.detail(), orderRepository.getOrderDetail(orderId, true));
+            return new PayOrderResponse(false, result.status().name(), result.detail(), display(orderRepository.getOrderDetail(orderId, true)));
         }
 
         boolean advanced = orderRepository.markPaid(orderId, info.version(), result.providerReference(), result.provider());
@@ -221,7 +235,7 @@ public class OrderService {
 
         OrderResponse paid = orderRepository.getOrderDetail(orderId, true);
         eventPublisher.publishEvent(new OrderPaidEvent(orderId, paid.storeId(), paid.currency()));
-        return new PayOrderResponse(true, "PAID", null, paid);
+        return new PayOrderResponse(true, "PAID", null, display(paid));
     }
 
     // Starts the redirect-based flow (Normal/Shopping web checkout) - a

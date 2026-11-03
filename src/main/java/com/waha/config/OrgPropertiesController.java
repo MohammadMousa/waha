@@ -42,6 +42,8 @@ public class OrgPropertiesController {
             new PropertySpec("integer", "Minutes between kiosk heartbeat calls; 0 turns device monitoring off (default 0)", "0–1440 minutes"));
         KNOWN_KEYS.put("late_approval_expiration_minutes",
             new PropertySpec("integer", "A card approval arriving after the kiosk gave up still pays an unpaid order if the order is younger than this (default 3)", "1–60 minutes"));
+        KNOWN_KEYS.put("prices_exclude_vat",
+            new PropertySpec("boolean", "Show prices without VAT in the apps; by default prices are shown with VAT (default false)", "true or false"));
         KNOWN_KEYS.put("terminal_timeout_seconds",
             new PropertySpec("integer", "Seconds the kiosk waits for the card terminal; overrides the device setting (default 60)", "10–80 seconds"));
     }
@@ -171,7 +173,7 @@ public class OrgPropertiesController {
                 yield (v.equals("true") || v.equals("false")) ? null
                     : "auto_log_upload_enabled must be 'true' or 'false'";
             }
-            case "enable_logging", "device_auto_restart_enabled" -> {
+            case "enable_logging", "device_auto_restart_enabled", "prices_exclude_vat" -> {
                 String v = value.trim().toLowerCase();
                 yield (v.equals("true") || v.equals("false")) ? null
                     : key + " must be 'true' or 'false'";

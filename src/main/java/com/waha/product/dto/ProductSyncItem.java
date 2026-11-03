@@ -7,4 +7,5 @@ import java.time.Instant;
 // name/description: bilingual JSON {"ar":"...","en":"..."}.
 // imageResourceId included so the client detects avatar changes and
 // invalidates its local resource cache for that product.
-public record ProductSyncItem(long id, String barcode, JsonNode name, JsonNode description, BigDecimal price, boolean active, Long imageResourceId, Instant updatedAt) {}
+public record ProductSyncItem(long id, String barcode, JsonNode name, JsonNode description, BigDecimal price, boolean active, Long imageResourceId, Instant updatedAt,
+                           BigDecimal priceWithVat) {}

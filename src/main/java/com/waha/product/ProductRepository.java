@@ -56,7 +56,8 @@ public class ProductRepository {
             rs.getBigDecimal("price"),
             rs.getBoolean("active"),
             imageResourceId,
-            rs.getTimestamp("updated_at").toInstant()
+            rs.getTimestamp("updated_at").toInstant(),
+            null
         );
     }
 
@@ -173,6 +174,10 @@ public class ProductRepository {
     }
 
     public long create(JsonNode body) {
+        return create(body, 1);
+    }
+
+    public long create(JsonNode body, long companyId) {
         String name = body.has("name") ? body.get("name").toString() : "{\"en\":\"\"}";
         String barcode = body.has("barcode") ? body.get("barcode").asText() : java.util.UUID.randomUUID().toString().replace("-", "").substring(0, 20);
         java.math.BigDecimal price = body.has("price") ? body.get("price").decimalValue() : java.math.BigDecimal.ZERO;
@@ -184,15 +189,16 @@ public class ProductRepository {
         org.springframework.jdbc.support.GeneratedKeyHolder keyHolder = new org.springframework.jdbc.support.GeneratedKeyHolder();
         jdbc.getJdbcTemplate().update(con -> {
             java.sql.PreparedStatement ps = con.prepareStatement(
-                "INSERT INTO products (barcode, name, description, price, active, company_id, category_id, image_resource_id) VALUES (?, ?, ?, ?, ?, 1, ?, ?)",
+                "INSERT INTO products (barcode, name, description, price, active, company_id, category_id, image_resource_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                 new String[]{"id"});
             ps.setString(1, barcode);
             ps.setString(2, name);
             ps.setString(3, description);
             ps.setBigDecimal(4, price);
             ps.setBoolean(5, active);
-            if (categoryId != null) ps.setLong(6, categoryId); else ps.setNull(6, java.sql.Types.BIGINT);
-            if (imageResourceId != null) ps.setLong(7, imageResourceId); else ps.setNull(7, java.sql.Types.BIGINT);
+            ps.setLong(6, companyId);
+            if (categoryId != null) ps.setLong(7, categoryId); else ps.setNull(7, java.sql.Types.BIGINT);
+            if (imageResourceId != null) ps.setLong(8, imageResourceId); else ps.setNull(8, java.sql.Types.BIGINT);
             return ps;
         }, keyHolder);
         long productId = keyHolder.getKey().longValue();

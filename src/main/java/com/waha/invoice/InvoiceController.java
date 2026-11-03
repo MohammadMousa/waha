@@ -53,7 +53,7 @@ public class InvoiceController {
         }
 
         try {
-            OrderResponse order = orderService.getOrder(orderId);
+            OrderResponse order = orderService.getOrderForInvoice(orderId);
             ReceiptInfo receiptInfo = receiptInfoRepository.findByStoreId(order.storeId()).orElse(null);
             return ResponseEntity.ok(InvoiceHtmlRenderer.render(order, receiptInfo, ref, lang));
         } catch (OrderNotFoundException e) {
@@ -66,7 +66,7 @@ public class InvoiceController {
     public ResponseEntity<byte[]> pdf(@PathVariable String orderId,
                                        @RequestParam(defaultValue = "en") String lang) {
         try {
-            OrderResponse order = orderService.getOrder(orderId);
+            OrderResponse order = orderService.getOrderForInvoice(orderId);
             ReceiptInfo receiptInfo = receiptInfoRepository.findByStoreId(order.storeId()).orElse(null);
             byte[] pdfBytes = InvoicePdfRenderer.render(order, receiptInfo, lang);
             String filename = "invoice-" + (order.displayId() != null ? order.displayId() : orderId) + ".pdf";
