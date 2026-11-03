@@ -88,6 +88,13 @@
             <version>3.5.3</version>
         </dependency>
 
+        <!-- XLSX read/write for the product import and export. -->
+        <dependency>
+            <groupId>org.apache.poi</groupId>
+            <artifactId>poi-ooxml</artifactId>
+            <version>5.2.5</version>
+        </dependency>
+
         <!-- test -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
