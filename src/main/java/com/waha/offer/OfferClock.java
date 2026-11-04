@@ -17,6 +17,10 @@ public class OfferClock {
         this.zone = ZoneId.of(zone);
     }
 
+    public ZoneId zone() {
+        return zone;
+    }
+
     public LocalDate today() {
         return LocalDate.now(zone);
     }
