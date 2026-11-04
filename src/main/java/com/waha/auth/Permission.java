@@ -29,6 +29,9 @@ public enum Permission {
     VIEW_OFFERS,        // see offers — branch admin, operator and above
     MANAGE_OFFERS,      // create, change, enable and delete offers — client manager (organization owner) and above
 
+    VIEW_COUPONS,       // see coupons and their redemptions — branch admin, operator and above
+    MANAGE_COUPONS,     // create, change, enable, generate and delete coupons — client manager (organization owner) and above
+
     UPLOAD_LOGS;        // upload device diagnostic logs — granted to KIOSK by default
 
     // The single authoritative mapping: role → what it can do.
@@ -41,16 +44,16 @@ public enum Permission {
         Role.OPERATOR,           Set.of(VIEW_PRODUCTS, EDIT_PRODUCTS, MANAGE_CATEGORIES,
                                         VIEW_OWN_ORDERS, VIEW_ORDER_HISTORY, VIEW_ALL_ORDERS, PROCESS_ORDERS,
                                         EDIT_RESOURCES,
-                                        VIEW_INVENTORY, PROCESS_INVENTORY, VIEW_OFFERS),
+                                        VIEW_INVENTORY, PROCESS_INVENTORY, VIEW_OFFERS, VIEW_COUPONS),
         Role.BRANCH_ADMIN,       Set.of(VIEW_PRODUCTS, EDIT_PRODUCTS, MANAGE_CATEGORIES,
                                         VIEW_OWN_ORDERS, VIEW_ORDER_HISTORY, VIEW_ALL_ORDERS, PROCESS_ORDERS,
                                         MANAGE_EMPLOYEES, MANAGE_DEVICES, MANAGE_STORES, EDIT_RESOURCES,
-                                        VIEW_INVENTORY, PROCESS_INVENTORY, MANAGE_INVENTORY, VIEW_OFFERS),
+                                        VIEW_INVENTORY, PROCESS_INVENTORY, MANAGE_INVENTORY, VIEW_OFFERS, VIEW_COUPONS),
         Role.ORGANIZATION_OWNER, Set.of(VIEW_PRODUCTS, EDIT_PRODUCTS, MANAGE_CATEGORIES,
                                         VIEW_OWN_ORDERS, VIEW_ORDER_HISTORY, VIEW_ALL_ORDERS, PROCESS_ORDERS,
                                         MANAGE_EMPLOYEES, MANAGE_DEVICES, MANAGE_STORES, EDIT_RESOURCES,
                                         VIEW_INVENTORY, PROCESS_INVENTORY, MANAGE_INVENTORY,
-                                        VIEW_OFFERS, MANAGE_OFFERS),
+                                        VIEW_OFFERS, MANAGE_OFFERS, VIEW_COUPONS, MANAGE_COUPONS),
         Role.SUPER_ADMIN,        EnumSet.allOf(Permission.class)
     );
 }
