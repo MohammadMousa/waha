@@ -229,13 +229,6 @@ public class ProductRepository {
         );
     }
 
-    public void recordScanMiss(String barcode, long storeId) {
-        jdbc.update(
-            "INSERT INTO product_scan_misses (barcode, store_id) VALUES (:barcode, :storeId)",
-            Map.of("barcode", barcode, "storeId", storeId)
-        );
-    }
-
     public record ProductPage(List<Product> products, boolean hasMore) {}
 
     public ProductPage searchByStore(long companyId, String q, int page, int size) {

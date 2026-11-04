@@ -34,15 +34,17 @@ public class ProductController {
     private final SessionService sessionService;
     private final ResourceRepository resourceRepository;
     private final VatPricing vatPricing;
+    private final MissingProductTracker missTracker;
 
     public ProductController(ProductRepository productRepository, StoreRepository storeRepository,
                               SessionService sessionService, ResourceRepository resourceRepository,
-                              VatPricing vatPricing) {
+                              VatPricing vatPricing, MissingProductTracker missTracker) {
         this.productRepository = productRepository;
         this.storeRepository = storeRepository;
         this.sessionService = sessionService;
         this.resourceRepository = resourceRepository;
         this.vatPricing = vatPricing;
+        this.missTracker = missTracker;
     }
 
     // Discovery/browsing. storeId is optional - an explicit value still
@@ -121,7 +123,7 @@ public class ProductController {
         Optional<Product> product = productRepository.resolveByBarcode(barcode, companyId);
 
         if (product.isEmpty()) {
-            productRepository.recordScanMiss(barcode, resolvedStoreId);
+            missTracker.record(resolvedStoreId, barcode, () -> sessionService.resolveUsername(null, authHeader));
             return ResponseEntity.status(404).body(new ErrorResponse("No product found for barcode " + barcode));
         }
         if (!product.get().active()) {
