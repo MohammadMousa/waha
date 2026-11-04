@@ -15,8 +15,7 @@ public class OfferService {
 
     public record Request(String name, String type, Long clientId, String discountMode, BigDecimal discountValue,
                           BigDecimal maxDiscountAmount, String startDate, String endDate, Boolean enabled,
-                          String storeScope, List<Long> storeIds, List<Long> productIds,
-                          String activationMode) {}
+                          String storeScope, List<Long> storeIds, List<Long> productIds) {}
 
     // Per-field messages; thrown for a 400 reply.
     public static class ValidationException extends RuntimeException {
@@ -42,17 +41,7 @@ public class OfferService {
 
     // existingType is set when editing: the type cannot change.
     public OfferRepository.Fields validate(Request r, long orgId, String existingType) {
-        return validate(r, orgId, existingType, null);
-    }
-
-    // existingMode is set when editing: an omitted activation mode keeps the current one.
-    public OfferRepository.Fields validate(Request r, long orgId, String existingType, String existingMode) {
         Map<String, String> e = new LinkedHashMap<>();
-
-        String activation = r.activationMode() == null || r.activationMode().isBlank()
-            ? (existingMode != null ? existingMode : Offer.AUTO) : r.activationMode().trim().toUpperCase();
-        if (!(activation.equals(Offer.AUTO) || activation.equals(Offer.COUPON)))
-            e.put("activationMode", "Activation mode must be AUTO or COUPON");
 
         String name = r.name() == null ? "" : r.name().trim();
         if (name.isEmpty()) e.put("name", "Name is required");
@@ -106,7 +95,7 @@ public class OfferService {
         if (!e.isEmpty()) throw new ValidationException(e);
         return new OfferRepository.Fields(orgId, name, type, mode, value.setScale(2, java.math.RoundingMode.HALF_UP),
             max == null ? null : max.setScale(2, java.math.RoundingMode.HALF_UP), start, end,
-            r.enabled() == null || r.enabled(), scope, storeIds, productIds, activation);
+            r.enabled() == null || r.enabled(), scope, storeIds, productIds);
     }
 
     private static LocalDate parseDate(String s, String field, Map<String, String> errors) {
@@ -130,8 +119,7 @@ public class OfferService {
     public Map<String, Object> preview(OfferRepository.Fields f, List<SampleLine> sample, BigDecimal cartTotal) {
         List<String> warnings = new ArrayList<>();
         Offer draft = new Offer(0, f.organizationId(), f.name(), f.type(), f.discountMode(), f.discountValue(),
-            f.maxDiscountAmount(), f.startDate(), f.endDate(), true, f.storeScope(), new HashSet<>(f.productIds()),
-            f.activationMode());
+            f.maxDiscountAmount(), f.startDate(), f.endDate(), true, f.storeScope(), new HashSet<>(f.productIds()));
 
         List<PricingEngine.Line> lines = new ArrayList<>();
         if (sample != null && !sample.isEmpty()) {
@@ -167,9 +155,7 @@ public class OfferService {
 
     private List<String> overlapWarnings(OfferRepository.Fields f) {
         List<String> out = new ArrayList<>();
-        // Coupon offers only apply with a code, so they never overlap with anything.
-        if (Offer.COUPON.equals(f.activationMode())) return out;
-        var page = repo.list(f.organizationId(), null, null, Offer.AUTO, f.startDate(), 0, 500);
+        var page = repo.list(f.organizationId(), null, null, f.startDate(), 0, 500);
         for (Map<String, Object> o : page.items()) {
             if (!f.type().equals(o.get("type")) || !Boolean.TRUE.equals(o.get("enabled"))) continue;
             LocalDate s = LocalDate.parse((String) o.get("startDate")), en = LocalDate.parse((String) o.get("endDate"));

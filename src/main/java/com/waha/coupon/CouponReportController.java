@@ -46,7 +46,6 @@ public class CouponReportController {
                                  @RequestParam(required = false) Long storeId,
                                  @RequestParam(required = false) Long couponId,
                                  @RequestParam(required = false) Long employeeId,
-                                 @RequestParam(required = false) Long offerId,
                                  @RequestParam(required = false) String username,
                                  @RequestParam(required = false) String sort,
                                  @RequestParam(required = false) String dir,
@@ -57,7 +56,7 @@ public class CouponReportController {
         size = Math.min(Math.max(size, 1), 200);
         page = Math.max(page, 0);
         try {
-            var f = new CouponReportService.Filter(groupBy, from, to, storeId, couponId, employeeId, offerId, username, sort, dir);
+            var f = new CouponReportService.Filter(groupBy, from, to, storeId, couponId, employeeId, username, sort, dir);
             var r = report.report(org, f, page, size);
             Map<String, Object> out = new LinkedHashMap<>();
             out.put("groupBy", groupBy.toLowerCase());
@@ -81,8 +80,7 @@ public class CouponReportController {
                                     @RequestParam(required = false) Long storeId,
                                     @RequestParam(required = false) Long couponId,
                                     @RequestParam(required = false) Long employeeId,
-                                    @RequestParam(required = false) Long offerId,
-                                    @RequestParam(required = false) String username,
+                                       @RequestParam(required = false) String username,
                                     @RequestParam(required = false) String sort,
                                     @RequestParam(required = false) String dir) {
         long org = org(auth);
@@ -91,7 +89,7 @@ public class CouponReportController {
         if (!fmt.equals("csv") && !fmt.equals("xlsx"))
             return ResponseEntity.badRequest().body(Map.of("message", "Some filters are not valid", "errors", Map.of("format", "format must be csv or xlsx")));
         try {
-            var f = new CouponReportService.Filter(groupBy, from, to, storeId, couponId, employeeId, offerId, username, sort, dir);
+            var f = new CouponReportService.Filter(groupBy, from, to, storeId, couponId, employeeId, username, sort, dir);
             byte[] file = report.export(org, f, fmt);
             MediaType type = fmt.equals("xlsx")
                 ? MediaType.parseMediaType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")

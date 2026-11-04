@@ -125,6 +125,7 @@ public class OrderService {
         PricingEngine.Result priced = offerPricing.price(storeId, lines, vatRate, coupon == null ? null : coupon.input());
         if (coupon != null) {
             couponService.checkMinimum(coupon.coupon(), priced.subtotalBeforeCoupon());
+            couponService.checkStacking(coupon.coupon(), priced.discountAmount().subtract(priced.couponDiscount()));
             if (priced.couponOffer() == null) {
                 throw new com.waha.coupon.CouponException("COUPON_NOT_APPLICABLE", "No item in the cart qualifies for this coupon");
             }
@@ -149,11 +150,11 @@ public class OrderService {
     public QuoteResponse quote(QuoteRequest request) {
         long storeId = requireStoreId(request.storeId());
         StoreConfig store = storeRepository.getStoreConfig(storeId);
-        Totals totals = computeTotals(storeId, request.items(), store.vatRate(), resolveCoupon(request.couponCode(), storeId));
+        Totals totals = computeTotals(storeId, request.items(), store.vatRate(), resolveCoupon(request.couponCode(), storeId, request.username()));
         var used = totals.coupon();
         QuoteResponse quote = new QuoteResponse(totals.subtotal(), totals.tax(), totals.total(), totals.items(),
             totals.priced().discountAmount(), invoiceOffer(totals.priced()),
-            used == null ? null : new com.waha.order.dto.CouponView(used.coupon().code(), used.offer().name(),
+            used == null ? null : new com.waha.order.dto.CouponView(used.coupon().code(), used.coupon().name(),
                 totals.priced().couponDiscount()));
         return vatPricing.forQuote(quote, storeRepository.findCompanyId(storeId), store.vatRate());
     }
@@ -167,7 +168,7 @@ public class OrderService {
         String username = requireUsername(request.username());
         StoreConfig store = storeRepository.getStoreConfig(storeId);
         // A retry of an order that already exists is not checked against the coupon again: the order is returned as it was.
-        var coupon = orderRepository.orderExists(request.orderId()) ? null : resolveCoupon(request.couponCode(), storeId);
+        var coupon = orderRepository.orderExists(request.orderId()) ? null : resolveCoupon(request.couponCode(), storeId, username);
         Totals totals = computeTotals(storeId, request.items(), store.vatRate(), coupon);
 
         boolean wasCreated = orderRepository.createOrderIdempotent(
@@ -184,9 +185,9 @@ public class OrderService {
     }
 
     // null when no code was submitted (a blank code counts as none).
-    private com.waha.coupon.CouponService.Resolved resolveCoupon(String code, long storeId) {
+    private com.waha.coupon.CouponService.Resolved resolveCoupon(String code, long storeId, String username) {
         if (code == null || code.isBlank()) return null;
-        return couponService.resolve(code, storeId, storeRepository.findCompanyId(storeId));
+        return couponService.resolve(code, storeId, storeRepository.findCompanyId(storeId), username);
     }
 
     private static AppliedOfferView invoiceOffer(PricingEngine.Result priced) {

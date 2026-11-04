@@ -57,7 +57,7 @@ public class VatPricing {
     }
 
     private static com.waha.order.dto.CouponView couponWithVat(com.waha.order.dto.CouponView c, BigDecimal rate) {
-        return c == null ? null : new com.waha.order.dto.CouponView(c.code(), c.offerName(), withVat(c.discountAmount(), rate));
+        return c == null ? null : new com.waha.order.dto.CouponView(c.code(), c.name(), withVat(c.discountAmount(), rate));
     }
 
     private static BigDecimal discountOf(List<OrderItemView> items) {

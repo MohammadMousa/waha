@@ -31,7 +31,8 @@ public class OrderController {
             QuoteRequest resolved = new QuoteRequest(
                 sessionService.resolveStoreId(request.storeId(), authHeader),
                 request.items(),
-                request.couponCode()
+                request.couponCode(),
+                sessionService.resolveUsername(request.username(), authHeader)
             );
             return ResponseEntity.ok(orderService.quote(resolved));
         } catch (InvalidRequestException e) {

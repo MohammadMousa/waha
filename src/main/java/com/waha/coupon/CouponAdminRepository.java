@@ -17,31 +17,32 @@ public class CouponAdminRepository {
 
     public record Page(List<Map<String, Object>> items, long total) {}
 
-    public record Fields(String code, long offerId, boolean enabled, LocalDateTime startsAt, LocalDateTime expiresAt,
-                         Integer usageLimit, BigDecimal minimumOrderAmount, BigDecimal maxDiscountPerOrder,
+    public record Fields(String code, String name, String type, String discountMode, BigDecimal discountValue,
+                         BigDecimal maxDiscountPerOrder, String storeScope, List<Long> storeIds, List<Long> productIds,
+                         boolean enabled, LocalDateTime startsAt, LocalDateTime expiresAt,
+                         Integer maxInvoices, Integer maxInvoicesPerUser, BigDecimal maxAmount,
+                         BigDecimal maxAmountPerUser, BigDecimal minimumOrderAmount, boolean allowStackingWithOffers,
                          Long employeeId) {}
 
     private static final String USAGE_SQL = "(SELECT COUNT(*) FROM coupon_redemptions r JOIN orders od ON od.id = r.order_id "
         + "WHERE r.coupon_id = c.id AND od.status = 'PAID')";
+    private static final String USED_SQL = "(SELECT COALESCE(SUM(r.discount_amount), 0) FROM coupon_redemptions r "
+        + "JOIN orders od ON od.id = r.order_id WHERE r.coupon_id = c.id AND od.status = 'PAID')";
 
-    // The derived status, from the coupon's own switch and dates, its offer's dates and its usage.
+    // The derived status, from the coupon's own switch, dates and limits.
     private static final String SELECT_SQL = """
-        SELECT c.id, c.organization_id, c.offer_id, c.code, c.enabled, c.starts_at, c.expires_at, c.usage_limit,
-               c.minimum_order_amount, c.max_discount_per_order, c.employee_id, c.created_at, c.updated_at,
-               o.name AS offer_name, o.type AS offer_type, o.discount_mode, o.discount_value, o.max_discount_amount,
-               o.enabled AS offer_enabled, o.start_date, o.end_date, o.store_scope,
+        SELECT c.*,
                COALESCE(NULLIF(TRIM(CONCAT_WS(' ', e.first_name, e.last_name)), ''), e.username) AS employee_name,
-               %s AS usage_count,
+               %s AS usage_count, %s AS used_amount,
                CASE WHEN c.enabled = 0 THEN 'DISABLED'
-                    WHEN (c.expires_at IS NOT NULL AND c.expires_at < :now) OR o.end_date < :today THEN 'EXPIRED'
-                    WHEN (c.starts_at IS NOT NULL AND c.starts_at > :now) OR o.start_date > :today THEN 'SCHEDULED'
-                    WHEN c.usage_limit IS NOT NULL AND %s >= c.usage_limit THEN 'EXHAUSTED'
-                    WHEN o.enabled = 0 THEN 'OFFER_DISABLED'
+                    WHEN c.expires_at IS NOT NULL AND c.expires_at < :now THEN 'EXPIRED'
+                    WHEN c.starts_at IS NOT NULL AND c.starts_at > :now THEN 'SCHEDULED'
+                    WHEN (c.max_invoices IS NOT NULL AND %s >= c.max_invoices)
+                      OR (c.max_amount IS NOT NULL AND %s >= c.max_amount) THEN 'EXHAUSTED'
                     ELSE 'ACTIVE' END AS status
         FROM coupons c
-        JOIN offers o ON o.id = c.offer_id
         LEFT JOIN employees e ON e.id = c.employee_id
-        """.formatted(USAGE_SQL, USAGE_SQL);
+        """.formatted(USAGE_SQL, USED_SQL, USAGE_SQL, USED_SQL);
 
     private final NamedParameterJdbcTemplate jdbc;
     private final ObjectMapper mapper;
@@ -52,17 +53,16 @@ public class CouponAdminRepository {
     }
 
     private static MapSqlParameterSource times(LocalDateTime now) {
-        return new MapSqlParameterSource("now", Timestamp.valueOf(now)).addValue("today", java.sql.Date.valueOf(now.toLocalDate()));
+        return new MapSqlParameterSource("now", Timestamp.valueOf(now));
     }
 
-    public Page list(long org, String status, String q, Long offerId, Long employeeId, LocalDateTime now, int page, int size) {
+    public Page list(long org, String status, String q, Long employeeId, LocalDateTime now, int page, int size) {
         MapSqlParameterSource p = times(now).addValue("org", org);
         StringBuilder where = new StringBuilder(" WHERE c.organization_id = :org AND c.deleted_at IS NULL");
         if (q != null && !q.isBlank()) {
-            where.append(" AND (c.code LIKE :q OR o.name LIKE :q OR CAST(c.id AS CHAR) = :exact)");
+            where.append(" AND (c.code LIKE :q OR c.name LIKE :q OR CAST(c.id AS CHAR) = :exact)");
             p.addValue("q", "%" + q.trim() + "%").addValue("exact", q.trim());
         }
-        if (offerId != null) { where.append(" AND c.offer_id = :offer"); p.addValue("offer", offerId); }
         if (employeeId != null) { where.append(" AND c.employee_id = :emp"); p.addValue("emp", employeeId); }
         String outer = "";
         if (status != null && !status.isBlank() && !status.equalsIgnoreCase("all")) {
@@ -82,6 +82,8 @@ public class CouponAdminRepository {
             times(now).addValue("id", id).addValue("org", org), (rs, i) -> row(rs));
         if (rows.isEmpty()) return Optional.empty();
         Map<String, Object> m = rows.get(0);
+        m.put("storeIds", jdbc.queryForList("SELECT store_id FROM coupon_stores WHERE coupon_id = :id ORDER BY store_id", Map.of("id", id), Long.class));
+        m.put("productIds", jdbc.queryForList("SELECT product_id FROM coupon_products WHERE coupon_id = :id ORDER BY product_id", Map.of("id", id), Long.class));
         Map<String, Object> usage = new LinkedHashMap<>();
         usage.put("paidUses", m.get("usageCount"));
         usage.put("pendingOrders", jdbc.queryForObject("SELECT COUNT(*) FROM coupon_redemptions r JOIN orders od ON od.id = r.order_id "
@@ -96,27 +98,35 @@ public class CouponAdminRepository {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("id", rs.getLong("id"));
         m.put("code", rs.getString("code"));
-        m.put("offerId", rs.getLong("offer_id"));
-        m.put("offerName", rs.getString("offer_name"));
-        m.put("offerType", rs.getString("offer_type"));
+        m.put("name", rs.getString("name"));
+        m.put("type", rs.getString("type"));
         m.put("discountMode", rs.getString("discount_mode"));
         m.put("discountValue", rs.getBigDecimal("discount_value"));
         m.put("discountSummary", summary(rs.getString("discount_mode"), rs.getBigDecimal("discount_value")));
+        m.put("maxDiscountPerOrder", rs.getBigDecimal("max_discount_per_order"));
+        m.put("storeScope", rs.getString("store_scope"));
         m.put("enabled", rs.getBoolean("enabled"));
         m.put("startsAt", local(rs.getTimestamp("starts_at")));
         m.put("expiresAt", local(rs.getTimestamp("expires_at")));
-        m.put("usageLimit", rs.getObject("usage_limit") == null ? null : rs.getInt("usage_limit"));
-        m.put("usageCount", rs.getLong("usage_count"));
+        m.put("maxInvoices", nullableInt(rs, "max_invoices"));
+        m.put("maxInvoicesPerUser", nullableInt(rs, "max_invoices_per_user"));
+        m.put("maxAmount", rs.getBigDecimal("max_amount"));
+        m.put("maxAmountPerUser", rs.getBigDecimal("max_amount_per_user"));
         m.put("minimumOrderAmount", rs.getBigDecimal("minimum_order_amount"));
-        m.put("maxDiscountPerOrder", rs.getBigDecimal("max_discount_per_order"));
+        m.put("allowStackingWithOffers", rs.getBoolean("allow_stacking_with_offers"));
         m.put("employeeId", rs.getObject("employee_id") == null ? null : rs.getLong("employee_id"));
         m.put("employeeName", rs.getString("employee_name"));
+        m.put("usageCount", rs.getLong("usage_count"));
+        m.put("usedAmount", rs.getBigDecimal("used_amount"));
         m.put("status", rs.getString("status"));
-        m.put("offerStartDate", rs.getDate("start_date").toLocalDate().toString());
-        m.put("offerEndDate", rs.getDate("end_date").toLocalDate().toString());
         m.put("createdAt", rs.getTimestamp("created_at").toInstant().toString());
         m.put("updatedAt", rs.getTimestamp("updated_at").toInstant().toString());
         return m;
+    }
+
+    private static Integer nullableInt(java.sql.ResultSet rs, String col) throws java.sql.SQLException {
+        int v = rs.getInt(col);
+        return rs.wasNull() ? null : v;
     }
 
     static String summary(String mode, BigDecimal value) {
@@ -152,29 +162,48 @@ public class CouponAdminRepository {
     // ── changes ─────────────────────────────────────────────────────────────
 
     private static MapSqlParameterSource params(long org, Fields f, Long userId) {
-        return new MapSqlParameterSource("org", org).addValue("offer", f.offerId()).addValue("code", f.code())
-            .addValue("norm", Coupon.normalize(f.code())).addValue("enabled", f.enabled())
+        return new MapSqlParameterSource("org", org).addValue("code", f.code()).addValue("name", f.name())
+            .addValue("norm", Coupon.normalize(f.code())).addValue("type", f.type()).addValue("mode", f.discountMode())
+            .addValue("value", f.discountValue()).addValue("cap", f.maxDiscountPerOrder()).addValue("scope", f.storeScope())
+            .addValue("enabled", f.enabled())
             .addValue("starts", f.startsAt() == null ? null : Timestamp.valueOf(f.startsAt()))
             .addValue("expires", f.expiresAt() == null ? null : Timestamp.valueOf(f.expiresAt()))
-            .addValue("limit", f.usageLimit()).addValue("min", f.minimumOrderAmount())
-            .addValue("max", f.maxDiscountPerOrder()).addValue("emp", f.employeeId()).addValue("user", userId);
+            .addValue("inv", f.maxInvoices()).addValue("invUser", f.maxInvoicesPerUser())
+            .addValue("amt", f.maxAmount()).addValue("amtUser", f.maxAmountPerUser())
+            .addValue("min", f.minimumOrderAmount()).addValue("stack", f.allowStackingWithOffers())
+            .addValue("emp", f.employeeId()).addValue("user", userId);
     }
 
     public long insert(long org, Fields f, Long userId) {
         var keys = new org.springframework.jdbc.support.GeneratedKeyHolder();
-        jdbc.update("INSERT INTO coupons (organization_id, offer_id, code, code_normalized, enabled, starts_at, expires_at, "
-            + "usage_limit, minimum_order_amount, max_discount_per_order, employee_id, created_by, updated_by) "
-            + "VALUES (:org,:offer,:code,:norm,:enabled,:starts,:expires,:limit,:min,:max,:emp,:user,:user)",
-            params(org, f, userId), keys);
-        return keys.getKey().longValue();
+        jdbc.update("INSERT INTO coupons (organization_id, code, code_normalized, name, type, discount_mode, discount_value, "
+            + "max_discount_per_order, store_scope, enabled, starts_at, expires_at, max_invoices, max_invoices_per_user, "
+            + "max_amount, max_amount_per_user, minimum_order_amount, allow_stacking_with_offers, employee_id, created_by, updated_by) "
+            + "VALUES (:org,:code,:norm,:name,:type,:mode,:value,:cap,:scope,:enabled,:starts,:expires,:inv,:invUser,"
+            + ":amt,:amtUser,:min,:stack,:emp,:user,:user)", params(org, f, userId), keys);
+        long id = keys.getKey().longValue();
+        saveTargets(id, f);
+        return id;
     }
 
     public void update(long org, long id, Fields f, Long userId) {
-        jdbc.update("UPDATE coupons SET offer_id = :offer, code = :code, code_normalized = :norm, enabled = :enabled, "
-            + "starts_at = :starts, expires_at = :expires, usage_limit = :limit, minimum_order_amount = :min, "
-            + "max_discount_per_order = :max, employee_id = :emp, updated_by = :user "
+        jdbc.update("UPDATE coupons SET code = :code, code_normalized = :norm, name = :name, type = :type, "
+            + "discount_mode = :mode, discount_value = :value, max_discount_per_order = :cap, store_scope = :scope, "
+            + "enabled = :enabled, starts_at = :starts, expires_at = :expires, max_invoices = :inv, "
+            + "max_invoices_per_user = :invUser, max_amount = :amt, max_amount_per_user = :amtUser, "
+            + "minimum_order_amount = :min, allow_stacking_with_offers = :stack, employee_id = :emp, updated_by = :user "
             + "WHERE id = :id AND organization_id = :org AND deleted_at IS NULL",
             params(org, f, userId).addValue("id", id));
+        saveTargets(id, f);
+    }
+
+    private void saveTargets(long id, Fields f) {
+        jdbc.update("DELETE FROM coupon_stores WHERE coupon_id = :id", Map.of("id", id));
+        jdbc.update("DELETE FROM coupon_products WHERE coupon_id = :id", Map.of("id", id));
+        for (Long s : f.storeIds())
+            jdbc.update("INSERT INTO coupon_stores (coupon_id, store_id) VALUES (:id,:s)", Map.of("id", id, "s", s));
+        for (Long p : f.productIds())
+            jdbc.update("INSERT INTO coupon_products (coupon_id, product_id) VALUES (:id,:p)", Map.of("id", id, "p", p));
     }
 
     public void setEnabled(long id, boolean enabled, Long userId) {
@@ -206,7 +235,7 @@ public class CouponAdminRepository {
         Long total = jdbc.queryForObject("SELECT COUNT(*) FROM coupon_redemptions WHERE coupon_id = :id", Map.of("id", couponId), Long.class);
         List<Map<String, Object>> rows = jdbc.query("""
             SELECT r.order_id, od.display_id, s.name AS store_name, od.username, od.status, od.total_amount,
-                   r.discount_amount, r.code_snapshot, r.offer_name_snapshot, r.created_at
+                   r.discount_amount, r.code_snapshot, r.name_snapshot, r.created_at
             FROM coupon_redemptions r
             JOIN orders od ON od.id = r.order_id
             JOIN stores s ON s.id = od.store_id
@@ -221,7 +250,7 @@ public class CouponAdminRepository {
             m.put("orderTotal", rs.getBigDecimal("total_amount"));
             m.put("discountAmount", rs.getBigDecimal("discount_amount"));
             m.put("code", rs.getString("code_snapshot"));
-            m.put("offerName", rs.getString("offer_name_snapshot"));
+            m.put("name", rs.getString("name_snapshot"));
             m.put("createdAt", rs.getTimestamp("created_at").toInstant().toString());
             return m;
         });

@@ -143,16 +143,10 @@ public class OrderRepository {
             recordApplication(orderId, null, priced.globalOffer(), priced.globalDiscount());
         }
         if (coupon != null && priced.couponOffer() != null) {
-            var o = priced.couponOffer();
-            jdbcTemplate.update(
-                "INSERT INTO offer_applications (order_id, order_item_id, offer_id, offer_name, offer_type, discount_mode, " +
-                "discount_value, discount_amount, coupon_id, coupon_code) VALUES (?,?,?,?,?,?,?,?,?,?)",
-                orderId, null, o.id(), o.name(), o.type(), o.discountMode(), o.discountValue(), priced.couponDiscount(),
-                coupon.coupon().id(), coupon.coupon().code());
-            jdbcTemplate.update("INSERT IGNORE INTO coupon_redemptions (coupon_id, offer_id, order_id, employee_id, code_snapshot, "
-                + "offer_name_snapshot, discount_amount) VALUES (?,?,?,?,?,?,?)",
-                coupon.coupon().id(), o.id(), orderId, coupon.coupon().employeeId(), coupon.coupon().code(), o.name(),
-                priced.couponDiscount());
+            jdbcTemplate.update("INSERT IGNORE INTO coupon_redemptions (coupon_id, order_id, employee_id, code_snapshot, "
+                + "name_snapshot, discount_amount) VALUES (?,?,?,?,?,?)",
+                coupon.coupon().id(), orderId, coupon.coupon().employeeId(), coupon.coupon().code(),
+                coupon.coupon().name(), priced.couponDiscount());
         }
         if (priced.discountAmount().signum() > 0) {
             jdbcTemplate.update("UPDATE orders SET discount_amount = ? WHERE id = ?", priced.discountAmount(), orderId);
@@ -310,11 +304,11 @@ public class OrderRepository {
         );
 
         List<AppliedOfferView> invoiceOffers = jdbcTemplate.query(
-            "SELECT offer_id, offer_name FROM offer_applications WHERE order_id = ? AND order_item_id IS NULL AND coupon_id IS NULL ORDER BY id LIMIT 1",
+            "SELECT offer_id, offer_name FROM offer_applications WHERE order_id = ? AND order_item_id IS NULL ORDER BY id LIMIT 1",
             (rs, i) -> new AppliedOfferView(rs.getLong(1), rs.getString(2)), orderId);
 
         List<com.waha.order.dto.CouponView> couponUsed = jdbcTemplate.query(
-            "SELECT coupon_code, offer_name, discount_amount FROM offer_applications WHERE order_id = ? AND coupon_id IS NOT NULL ORDER BY id LIMIT 1",
+            "SELECT code_snapshot, name_snapshot, discount_amount FROM coupon_redemptions WHERE order_id = ? ORDER BY id LIMIT 1",
             (rs, i) -> new com.waha.order.dto.CouponView(rs.getString(1), rs.getString(2), rs.getBigDecimal(3)), orderId);
 
         // Exclude PENDING rows that were later resolved (same providerReference has a non-PENDING row).

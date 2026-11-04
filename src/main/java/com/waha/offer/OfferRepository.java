@@ -41,26 +41,6 @@ public class OfferRepository {
         return offers;
     }
 
-    // One offer by id with its products, for coupons. Empty when it does not exist or was deleted. Enabled state,
-    // dates and the activation mode are for the caller to check.
-    public Optional<Offer> loadById(long id) {
-        List<Offer> base = jdbc.query("SELECT * FROM offers WHERE id = ? AND deleted_at IS NULL",
-            (rs, i) -> toOffer(rs, Set.of()), id);
-        if (base.isEmpty()) return Optional.empty();
-        Offer o = base.get(0);
-        Set<Long> products = productsOf(List.of(id)).getOrDefault(id, Set.of());
-        return Optional.of(new Offer(o.id(), o.organizationId(), o.name(), o.type(), o.discountMode(), o.discountValue(),
-            o.maxDiscountAmount(), o.startDate(), o.endDate(), o.enabled(), o.storeScope(), products, o.activationMode()));
-    }
-
-    // Whether the offer's store scope includes the store (the offer's client is checked by the caller).
-    public boolean offerCoversStore(Offer offer, long storeId) {
-        if (!"SOME".equals(offer.storeScope())) return true;
-        Integer n = jdbc.queryForObject("SELECT COUNT(*) FROM offer_stores WHERE offer_id = ? AND store_id = ?",
-            Integer.class, offer.id(), storeId);
-        return n != null && n > 0;
-    }
-
     public void clearCache() {
         byStore.clear();
     }
@@ -73,7 +53,7 @@ public class OfferRepository {
         List<Offer> base = jdbc.query("""
             SELECT o.* FROM offers o
             JOIN stores s ON s.id = ? AND s.organization_id = o.organization_id
-            WHERE o.deleted_at IS NULL AND o.enabled = 1 AND o.activation_mode = 'AUTO'
+            WHERE o.deleted_at IS NULL AND o.enabled = 1
               AND (o.store_scope = 'ALL'
                    OR EXISTS (SELECT 1 FROM offer_stores os WHERE os.offer_id = o.id AND os.store_id = ?))
             """, (rs, i) -> toOffer(rs, Set.of()), storeId, storeId);
@@ -82,7 +62,7 @@ public class OfferRepository {
         Map<Long, Set<Long>> products = productsOf(base.stream().map(Offer::id).toList());
         return base.stream().map(o -> new Offer(o.id(), o.organizationId(), o.name(), o.type(), o.discountMode(),
             o.discountValue(), o.maxDiscountAmount(), o.startDate(), o.endDate(), o.enabled(), o.storeScope(),
-            products.getOrDefault(o.id(), Set.of()), o.activationMode())).toList();
+            products.getOrDefault(o.id(), Set.of()))).toList();
     }
 
     private Map<Long, Set<Long>> productsOf(List<Long> offerIds) {
@@ -99,7 +79,7 @@ public class OfferRepository {
         return new Offer(rs.getLong("id"), rs.getLong("organization_id"), rs.getString("name"),
             rs.getString("type"), rs.getString("discount_mode"), rs.getBigDecimal("discount_value"), max,
             rs.getDate("start_date").toLocalDate(), rs.getDate("end_date").toLocalDate(),
-            rs.getBoolean("enabled"), rs.getString("store_scope"), products, rs.getString("activation_mode"));
+            rs.getBoolean("enabled"), rs.getString("store_scope"), products);
     }
 
     // ── Admin side ────────────────────────────────────────────────────────────
@@ -113,17 +93,8 @@ public class OfferRepository {
              ELSE 'ENABLED' END""";
 
     public Page list(long orgId, String status, String q, LocalDate today, int page, int size) {
-        return list(orgId, status, q, null, today, page, size);
-    }
-
-    // activationMode: AUTO or COUPON to list one kind only, null for both.
-    public Page list(long orgId, String status, String q, String activationMode, LocalDate today, int page, int size) {
         StringBuilder where = new StringBuilder(" WHERE o.organization_id = ? AND o.deleted_at IS NULL");
         List<Object> where_args = new ArrayList<>(List.of(orgId));
-        if (activationMode != null && !activationMode.isBlank()) {
-            where.append(" AND o.activation_mode = ?");
-            where_args.add(activationMode.trim().toUpperCase());
-        }
         if (q != null && !q.isBlank()) {
             where.append(" AND (o.name LIKE ? OR CAST(o.id AS CHAR) = ?)");
             where_args.add("%" + q.trim() + "%");
@@ -166,7 +137,6 @@ public class OfferRepository {
         m.put("endDate", rs.getDate("end_date").toLocalDate().toString());
         m.put("enabled", rs.getBoolean("enabled"));
         m.put("storeScope", rs.getString("store_scope"));
-        m.put("activationMode", rs.getString("activation_mode"));
         try { m.put("status", rs.getString("status")); } catch (java.sql.SQLException ignored) { }
         m.put("createdAt", rs.getTimestamp("created_at").toInstant().toString());
         m.put("updatedAt", rs.getTimestamp("updated_at").toInstant().toString());
@@ -208,16 +178,16 @@ public class OfferRepository {
 
     public record Fields(long organizationId, String name, String type, String discountMode, BigDecimal discountValue,
                          BigDecimal maxDiscountAmount, LocalDate startDate, LocalDate endDate, boolean enabled,
-                         String storeScope, List<Long> storeIds, List<Long> productIds, String activationMode) {}
+                         String storeScope, List<Long> storeIds, List<Long> productIds) {}
 
     @Transactional
     public long insert(Fields f, Long userId) {
         jdbc.update("""
             INSERT INTO offers (organization_id, name, type, discount_mode, discount_value, max_discount_amount,
-                                start_date, end_date, enabled, store_scope, activation_mode, created_by, updated_by)
-            VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)
+                                start_date, end_date, enabled, store_scope, created_by, updated_by)
+            VALUES (?,?,?,?,?,?,?,?,?,?,?,?)
             """, f.organizationId(), f.name(), f.type(), f.discountMode(), f.discountValue(), f.maxDiscountAmount(),
-            Date.valueOf(f.startDate()), Date.valueOf(f.endDate()), f.enabled(), f.storeScope(), f.activationMode(), userId, userId);
+            Date.valueOf(f.startDate()), Date.valueOf(f.endDate()), f.enabled(), f.storeScope(), userId, userId);
         long id = jdbc.queryForObject("SELECT LAST_INSERT_ID()", Long.class);
         replaceTargets(id, f);
         clearCache();
@@ -229,10 +199,10 @@ public class OfferRepository {
     public void update(long id, Fields f, Long userId) {
         jdbc.update("""
             UPDATE offers SET name = ?, discount_mode = ?, discount_value = ?, max_discount_amount = ?,
-                   start_date = ?, end_date = ?, enabled = ?, store_scope = ?, activation_mode = ?, updated_by = ?
+                   start_date = ?, end_date = ?, enabled = ?, store_scope = ?, updated_by = ?
             WHERE id = ? AND deleted_at IS NULL
             """, f.name(), f.discountMode(), f.discountValue(), f.maxDiscountAmount(),
-            Date.valueOf(f.startDate()), Date.valueOf(f.endDate()), f.enabled(), f.storeScope(), f.activationMode(), userId, id);
+            Date.valueOf(f.startDate()), Date.valueOf(f.endDate()), f.enabled(), f.storeScope(), userId, id);
         replaceTargets(id, f);
         clearCache();
     }
@@ -274,12 +244,6 @@ public class OfferRepository {
     public Optional<Long> organizationOf(long offerId) {
         return jdbc.query("SELECT organization_id FROM offers WHERE id = ? AND deleted_at IS NULL",
             rs -> rs.next() ? Optional.of(rs.getLong(1)) : Optional.<Long>empty(), offerId);
-    }
-
-    // Coupons (not deleted) that use this offer.
-    public int countCouponsOf(long offerId) {
-        Integer n = jdbc.queryForObject("SELECT COUNT(*) FROM coupons WHERE offer_id = ? AND deleted_at IS NULL", Integer.class, offerId);
-        return n == null ? 0 : n;
     }
 
     // Validation helpers: how many of these ids belong to the client.

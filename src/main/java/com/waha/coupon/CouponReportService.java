@@ -31,7 +31,7 @@ public class CouponReportService {
     }
 
     public record Filter(String groupBy, String from, String to, Long storeId, Long couponId, Long employeeId,
-                         Long offerId, String username, String sort, String dir) {}
+                         String username, String sort, String dir) {}
 
     public record Page(Map<String, Object> summary, List<Map<String, Object>> items, long total) {}
 
@@ -91,7 +91,6 @@ public class CouponReportService {
         if (f.storeId() != null)    { where.append(" AND o.store_id = :store");     p.addValue("store", f.storeId()); }
         if (f.couponId() != null)   { where.append(" AND r.coupon_id = :coupon");   p.addValue("coupon", f.couponId()); }
         if (f.employeeId() != null) { where.append(" AND r.employee_id = :emp");    p.addValue("emp", f.employeeId()); }
-        if (f.offerId() != null)    { where.append(" AND r.offer_id = :offer");     p.addValue("offer", f.offerId()); }
         if (f.username() != null && !f.username().isBlank()) {
             where.append(" AND o.username = :user");
             p.addValue("user", f.username().trim());
@@ -131,14 +130,14 @@ public class CouponReportService {
             }
             case "coupon" -> {
                 total = count(p, where, "SELECT COUNT(*) FROM (SELECT 1 " + FROM + where + " GROUP BY r.coupon_id) g");
-                select = "SELECT r.coupon_id AS coupon_id, c.code AS code, MAX(r.offer_name_snapshot) AS offer_name, "
+                select = "SELECT r.coupon_id AS coupon_id, c.code AS code, MAX(r.name_snapshot) AS name, "
                     + "c.employee_id AS employee_id, " + EMPLOYEE_NAME + " AS employee_name, " + AGG + FROM + where
                     + " GROUP BY r.coupon_id, c.code, c.employee_id, " + EMPLOYEE_NAME;
             }
             default -> {
                 total = ((Number) summary.get("orders")).longValue();
                 select = "SELECT o.id AS order_id, o.display_id, o.store_id, s.name AS store_name, o.username, "
-                    + PAID_AT + " AS paid_at, o.created_at, r.coupon_id, r.code_snapshot AS code, r.offer_name_snapshot AS offer_name, "
+                    + PAID_AT + " AS paid_at, o.created_at, r.coupon_id, r.code_snapshot AS code, r.name_snapshot AS name, "
                     + "r.employee_id, " + EMPLOYEE_NAME + " AS employee_name, o.subtotal_amount AS sub_total, o.tax_amount AS vat, "
                     + "o.total_amount AS total, r.discount_amount AS discount, o.discount_amount AS order_discount " + FROM + where;
             }
@@ -204,7 +203,7 @@ public class CouponReportService {
             case "coupon" -> {
                 m.put("couponId", rs.getLong("coupon_id"));
                 m.put("code", rs.getString("code"));
-                m.put("offerName", rs.getString("offer_name"));
+                m.put("name", rs.getString("name"));
                 m.put("employeeId", nullableLong(rs, "employee_id"));
                 m.put("employeeName", rs.getString("employee_name"));
             }
@@ -220,7 +219,7 @@ public class CouponReportService {
                 m.put("createdAt", created != null ? created.toInstant().toString() : null);
                 m.put("couponId", rs.getLong("coupon_id"));
                 m.put("code", rs.getString("code"));
-                m.put("offerName", rs.getString("offer_name"));
+                m.put("name", rs.getString("name"));
                 m.put("employeeId", nullableLong(rs, "employee_id"));
                 m.put("employeeName", rs.getString("employee_name"));
                 m.put("orderDiscount", rs.getBigDecimal("order_discount"));
@@ -256,7 +255,7 @@ public class CouponReportService {
         String group = f.groupBy() == null || f.groupBy().isBlank() ? "orders" : f.groupBy().trim().toLowerCase();
         List<String> keys = switch (group) {
             case "employee" -> List.of("employeeName", "orders", "subTotal", "vat", "total", "discount");
-            case "coupon" -> List.of("code", "offerName", "employeeName", "orders", "subTotal", "vat", "total", "discount");
+            case "coupon" -> List.of("code", "name", "employeeName", "orders", "subTotal", "vat", "total", "discount");
             default -> List.of("displayId", "paidAt", "storeName", "username", "code", "employeeName",
                 "subTotal", "vat", "total", "discount");
         };

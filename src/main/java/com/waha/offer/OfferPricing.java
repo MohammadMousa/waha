@@ -27,9 +27,9 @@ public class OfferPricing {
         return PricingEngine.price(lines, currentOffers(storeId), vatRate, coupon);
     }
 
-    // Automatic offers valid today for a store (pricing and kiosk badges). Offers that need a coupon are never in it.
+    // Offers valid today for a store (pricing and kiosk badges).
     public List<Offer> currentOffers(long storeId) {
         var today = clock.today();
-        return offers.loadForStore(storeId).stream().filter(o -> o.isAuto() && o.isCurrent(today)).toList();
+        return offers.loadForStore(storeId).stream().filter(o -> o.isCurrent(today)).toList();
     }
 }
