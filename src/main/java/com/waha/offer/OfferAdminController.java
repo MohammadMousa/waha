@@ -49,6 +49,7 @@ public class OfferAdminController {
             @RequestParam(required = false) Long clientId,
             @RequestParam(required = false) String status,
             @RequestParam(required = false) String q,
+            @RequestParam(required = false) String activationMode,
             @RequestParam(defaultValue = "0") int page,
             @RequestParam(defaultValue = "10") int size) {
         UserSession s = session(auth, Permission.VIEW_OFFERS, clientId);
@@ -56,7 +57,7 @@ public class OfferAdminController {
         if (size > 500) size = 500;
         if (page < 0) page = 0;
         long org = clientId != null ? clientId : s.organizationId();
-        var result = repo.list(org, status, q, service.clock().today(), page, size);
+        var result = repo.list(org, status, q, activationMode, service.clock().today(), page, size);
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("items", result.items());
         out.put("totalCount", result.totalCount());
@@ -101,7 +102,12 @@ public class OfferAdminController {
         sessionService.requirePermissionForOrg(s, Permission.MANAGE_OFFERS, org.get());
         var before = repo.find(id, service.clock().today()).orElseThrow();
         try {
-            var fields = service.validate(body, org.get(), (String) before.get("type"));
+            var fields = service.validate(body, org.get(), (String) before.get("type"), (String) before.get("activationMode"));
+            if (Offer.COUPON.equals(before.get("activationMode")) && Offer.AUTO.equals(fields.activationMode())
+                && repo.countCouponsOf(id) > 0) {
+                return invalid(new OfferService.ValidationException(Map.of("activationMode",
+                    "Coupons use this offer, so it cannot be switched to AUTO")));
+            }
             repo.update(id, fields, userId(s));
             var after = repo.find(id, service.clock().today()).orElseThrow();
             repo.audit(id, userId(s), "UPDATE", before, after);

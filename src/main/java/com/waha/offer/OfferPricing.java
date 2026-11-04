@@ -18,14 +18,12 @@ public class OfferPricing {
     }
 
     public PricingEngine.Result price(long storeId, List<PricingEngine.Line> lines, BigDecimal vatRate) {
-        var today = clock.today();
-        List<Offer> current = offers.loadForStore(storeId).stream().filter(o -> o.isCurrent(today)).toList();
-        return PricingEngine.price(lines, current, vatRate);
+        return PricingEngine.price(lines, currentOffers(storeId), vatRate);
     }
 
-    // Offers valid today for a store (kiosk badges).
+    // Automatic offers valid today for a store (pricing and kiosk badges). Offers that need a coupon are never in it.
     public List<Offer> currentOffers(long storeId) {
         var today = clock.today();
-        return offers.loadForStore(storeId).stream().filter(o -> o.isCurrent(today)).toList();
+        return offers.loadForStore(storeId).stream().filter(o -> o.isAuto() && o.isCurrent(today)).toList();
     }
 }

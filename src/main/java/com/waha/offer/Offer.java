@@ -8,7 +8,21 @@ import java.util.Set;
 public record Offer(long id, long organizationId, String name, String type, String discountMode,
                     BigDecimal discountValue, BigDecimal maxDiscountAmount,
                     LocalDate startDate, LocalDate endDate, boolean enabled,
-                    String storeScope, Set<Long> productIds) {
+                    String storeScope, Set<Long> productIds, String activationMode) {
+
+    public static final String AUTO = "AUTO";
+    public static final String COUPON = "COUPON";
+
+    // Offers built without an activation mode apply automatically.
+    public Offer(long id, long organizationId, String name, String type, String discountMode,
+                 BigDecimal discountValue, BigDecimal maxDiscountAmount, LocalDate startDate, LocalDate endDate,
+                 boolean enabled, String storeScope, Set<Long> productIds) {
+        this(id, organizationId, name, type, discountMode, discountValue, maxDiscountAmount, startDate, endDate,
+            enabled, storeScope, productIds, AUTO);
+    }
+
+    public boolean isAuto() { return AUTO.equals(activationMode); }
+
 
     public static final String GLOBAL = "GLOBAL";
     public static final String PRODUCT = "PRODUCT";
