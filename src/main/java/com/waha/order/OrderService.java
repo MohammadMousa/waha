@@ -50,6 +50,7 @@ public class OrderService {
     private final com.waha.config.ConfigService configService;
     private final OfferPricing offerPricing;
     private final com.waha.pricing.VatPricing vatPricing;
+    private final com.waha.coupon.CouponService couponService;
 
     public OrderService(OrderRepository orderRepository, ProductRepository productRepository,
                          StoreRepository storeRepository, PaymentProvider paymentProvider,
@@ -58,8 +59,10 @@ public class OrderService {
                          ApplicationEventPublisher eventPublisher,
                          com.waha.config.ConfigService configService,
                          OfferPricing offerPricing,
-                         com.waha.pricing.VatPricing vatPricing) {
+                         com.waha.pricing.VatPricing vatPricing,
+                         com.waha.coupon.CouponService couponService) {
         this.offerPricing = offerPricing;
+        this.couponService = couponService;
         this.vatPricing = vatPricing;
         this.orderRepository = orderRepository;
         this.productRepository = productRepository;
@@ -72,7 +75,8 @@ public class OrderService {
     }
 
     private record Totals(BigDecimal subtotal, BigDecimal tax, BigDecimal total, List<OrderItemView> items,
-                          Map<Long, Product> productsById, PricingEngine.Result priced) {}
+                          Map<Long, Product> productsById, PricingEngine.Result priced,
+                          com.waha.coupon.CouponService.Resolved coupon) {}
 
     private static long requireStoreId(Long storeId) {
         if (storeId == null) {
@@ -99,7 +103,8 @@ public class OrderService {
     // discrepancies across branches are a data-entry/business-team concern,
     // surfaced later via reporting over the products table directly, not a
     // real-time gate here.
-    private Totals computeTotals(long storeId, List<OrderItemRequest> items, BigDecimal vatRate) {
+    private Totals computeTotals(long storeId, List<OrderItemRequest> items, BigDecimal vatRate,
+                                 com.waha.coupon.CouponService.Resolved coupon) {
         List<Long> productIds = items.stream().map(OrderItemRequest::productId).toList();
         Map<Long, Product> productsById = productRepository.findByIds(productIds).stream()
             .collect(Collectors.toMap(Product::id, p -> p));
@@ -117,7 +122,13 @@ public class OrderService {
 
         // Offers, discounts and tax (rounded per line on the discounted amount, the way Odoo books it, so the
         // amount charged equals what Odoo posts when a POS session closes) come from one place.
-        PricingEngine.Result priced = offerPricing.price(storeId, lines, vatRate);
+        PricingEngine.Result priced = offerPricing.price(storeId, lines, vatRate, coupon == null ? null : coupon.input());
+        if (coupon != null) {
+            couponService.checkMinimum(coupon.coupon(), priced.subtotalBeforeCoupon());
+            if (priced.couponOffer() == null) {
+                throw new com.waha.coupon.CouponException("COUPON_NOT_APPLICABLE", "No item in the cart qualifies for this coupon");
+            }
+        }
         if (!lines.isEmpty() && priced.total().signum() <= 0) {
             throw new OrderTotalNotPositiveException();
         }
@@ -130,7 +141,7 @@ public class OrderService {
                 l.discountAmount(), l.netAmount(), l.taxAmount(),
                 l.ownOffer() == null ? null : new AppliedOfferView(l.ownOffer().id(), l.ownOffer().name())));
         }
-        return new Totals(priced.subtotal(), priced.tax(), priced.total(), itemViews, productsById, priced);
+        return new Totals(priced.subtotal(), priced.tax(), priced.total(), itemViews, productsById, priced, coupon);
     }
 
     // Called after every scan so the Flutter cart screen shows a live,
@@ -138,9 +149,12 @@ public class OrderService {
     public QuoteResponse quote(QuoteRequest request) {
         long storeId = requireStoreId(request.storeId());
         StoreConfig store = storeRepository.getStoreConfig(storeId);
-        Totals totals = computeTotals(storeId, request.items(), store.vatRate());
+        Totals totals = computeTotals(storeId, request.items(), store.vatRate(), resolveCoupon(request.couponCode(), storeId));
+        var used = totals.coupon();
         QuoteResponse quote = new QuoteResponse(totals.subtotal(), totals.tax(), totals.total(), totals.items(),
-            totals.priced().discountAmount(), invoiceOffer(totals.priced()));
+            totals.priced().discountAmount(), invoiceOffer(totals.priced()),
+            used == null ? null : new com.waha.order.dto.CouponView(used.coupon().code(), used.offer().name(),
+                totals.priced().couponDiscount()));
         return vatPricing.forQuote(quote, storeRepository.findCompanyId(storeId), store.vatRate());
     }
 
@@ -152,19 +166,27 @@ public class OrderService {
         long storeId = requireStoreId(request.storeId());
         String username = requireUsername(request.username());
         StoreConfig store = storeRepository.getStoreConfig(storeId);
-        Totals totals = computeTotals(storeId, request.items(), store.vatRate());
+        // A retry of an order that already exists is not checked against the coupon again: the order is returned as it was.
+        var coupon = orderRepository.orderExists(request.orderId()) ? null : resolveCoupon(request.couponCode(), storeId);
+        Totals totals = computeTotals(storeId, request.items(), store.vatRate(), coupon);
 
         boolean wasCreated = orderRepository.createOrderIdempotent(
             request.orderId(), storeId, store.currency(), store.vatRate(), username, totals.subtotal(), totals.tax()
         );
 
         if (wasCreated) {
-            orderRepository.insertOrderItems(request.orderId(), totals.priced(), totals.productsById());
+            orderRepository.insertOrderItems(request.orderId(), totals.priced(), totals.productsById(), totals.coupon());
             long displayId = orderRepository.nextDisplayId(storeId);
             orderRepository.setDisplayId(request.orderId(), displayId);
         }
 
         return display(orderRepository.getOrderDetail(request.orderId(), wasCreated));
+    }
+
+    // null when no code was submitted (a blank code counts as none).
+    private com.waha.coupon.CouponService.Resolved resolveCoupon(String code, long storeId) {
+        if (code == null || code.isBlank()) return null;
+        return couponService.resolve(code, storeId, storeRepository.findCompanyId(storeId));
     }
 
     private static AppliedOfferView invoiceOffer(PricingEngine.Result priced) {

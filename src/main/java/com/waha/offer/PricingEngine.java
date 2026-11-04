@@ -18,16 +18,27 @@ public final class PricingEngine {
     public record PricedLine(long productId, int quantity, BigDecimal unitPrice, BigDecimal lineTotal,
                              BigDecimal ownDiscount, Offer ownOffer,
                              BigDecimal globalShare,
-                             BigDecimal discountAmount, BigDecimal netAmount, BigDecimal taxAmount) {}
+                             BigDecimal discountAmount, BigDecimal netAmount, BigDecimal taxAmount,
+                             BigDecimal couponShare) {}
 
     public record Result(List<PricedLine> lines, BigDecimal subtotal, BigDecimal tax, BigDecimal total,
-                         BigDecimal discountAmount, Offer globalOffer, BigDecimal globalDiscount) {}
+                         BigDecimal discountAmount, Offer globalOffer, BigDecimal globalDiscount,
+                         Offer couponOffer, BigDecimal couponDiscount, BigDecimal subtotalBeforeCoupon) {}
+
+    // A coupon's offer, evaluated after the automatic offers on what remains. maxDiscountPerOrder may be null.
+    public record CouponInput(Offer offer, BigDecimal maxDiscountPerOrder) {}
 
     private static final BigDecimal HUNDRED = BigDecimal.valueOf(100);
     private static final BigDecimal ZERO = new BigDecimal("0.00");
 
     // currentOffers: offers already valid for the store and the date.
     public static Result price(List<Line> lines, List<Offer> currentOffers, BigDecimal vatRate) {
+        return price(lines, currentOffers, vatRate, null);
+    }
+
+    // With a coupon: the automatic offers are priced exactly as without one, then the coupon's offer takes its
+    // discount from the amount that remains (never below zero), before tax.
+    public static Result price(List<Line> lines, List<Offer> currentOffers, BigDecimal vatRate, CouponInput coupon) {
         int n = lines.size();
         BigDecimal[] gross = new BigDecimal[n];
         BigDecimal[] own = new BigDecimal[n];
@@ -74,21 +85,76 @@ public final class PricingEngine {
         }
         if (globalDiscount.signum() > 0) share[largest] = share[largest].add(globalDiscount.subtract(given));
 
+        // 5b: coupon, on what remains after the automatic offers.
+        BigDecimal[] remaining = new BigDecimal[n];
+        BigDecimal remainingTotal = ZERO;
+        for (int i = 0; i < n; i++) {
+            remaining[i] = net[i].subtract(share[i]);
+            remainingTotal = remainingTotal.add(remaining[i]);
+        }
+        BigDecimal subtotalBeforeCoupon = remainingTotal;
+        BigDecimal[] couponShare = new BigDecimal[n];
+        java.util.Arrays.fill(couponShare, ZERO);
+        BigDecimal couponDiscount = ZERO;
+        Offer couponOffer = null;
+        if (coupon != null && remainingTotal.signum() > 0) {
+            Offer co = coupon.offer();
+            if (co.isGlobal()) {
+                BigDecimal d = cap(globalDiscount(co, remainingTotal), coupon.maxDiscountPerOrder(), remainingTotal);
+                couponShare = spread(d, remaining, remainingTotal);
+            } else {
+                BigDecimal[] raw = new BigDecimal[n];
+                BigDecimal sum = ZERO;
+                for (int i = 0; i < n; i++) {
+                    raw[i] = ZERO;
+                    Line l = lines.get(i);
+                    if (!co.productIds().contains(l.productId()) || remaining[i].signum() <= 0) continue;
+                    BigDecimal d = Offer.PERCENTAGE.equals(co.discountMode())
+                        ? remaining[i].multiply(co.discountValue()).divide(HUNDRED, 2, RoundingMode.HALF_UP)
+                        : co.discountValue().multiply(BigDecimal.valueOf(l.quantity()));
+                    raw[i] = cap(d, co.maxDiscountAmount(), remaining[i]);
+                    sum = sum.add(raw[i]);
+                }
+                BigDecimal limit = coupon.maxDiscountPerOrder();
+                couponShare = limit != null && sum.compareTo(limit) > 0 ? spread(limit, raw, sum) : raw;
+            }
+            for (BigDecimal c : couponShare) couponDiscount = couponDiscount.add(c);
+            if (couponDiscount.signum() > 0) couponOffer = co;
+        }
+
         // 6-7: tax per line on the final net amount, then totals.
         List<PricedLine> out = new ArrayList<>(n);
         BigDecimal finalSubtotal = ZERO, tax = ZERO, discountTotal = ZERO;
         for (int i = 0; i < n; i++) {
             Line l = lines.get(i);
-            BigDecimal finalNet = net[i].subtract(share[i]);
+            BigDecimal finalNet = net[i].subtract(share[i]).subtract(couponShare[i]);
             BigDecimal lineTax = finalNet.multiply(vatRate).setScale(2, RoundingMode.HALF_UP);
-            BigDecimal discount = own[i].add(share[i]);
+            BigDecimal discount = own[i].add(share[i]).add(couponShare[i]);
             out.add(new PricedLine(l.productId(), l.quantity(), l.unitPrice(), gross[i], own[i], ownOffer[i],
-                share[i], discount, finalNet, lineTax));
+                share[i], discount, finalNet, lineTax, couponShare[i]));
             finalSubtotal = finalSubtotal.add(finalNet);
             tax = tax.add(lineTax);
             discountTotal = discountTotal.add(discount);
         }
-        return new Result(out, finalSubtotal, tax, finalSubtotal.add(tax), discountTotal, globalOffer, globalDiscount);
+        return new Result(out, finalSubtotal, tax, finalSubtotal.add(tax), discountTotal, globalOffer, globalDiscount,
+            couponOffer, couponDiscount, subtotalBeforeCoupon);
+    }
+
+    // Splits an amount over the weights in proportion; the leftover cent goes to the heaviest weight.
+    private static BigDecimal[] spread(BigDecimal total, BigDecimal[] weights, BigDecimal weightSum) {
+        int n = weights.length;
+        BigDecimal[] out = new BigDecimal[n];
+        java.util.Arrays.fill(out, ZERO);
+        if (total.signum() <= 0 || weightSum.signum() <= 0) return out;
+        BigDecimal given = ZERO;
+        int largest = 0;
+        for (int i = 0; i < n; i++) {
+            out[i] = total.multiply(weights[i]).divide(weightSum, 2, RoundingMode.HALF_UP);
+            given = given.add(out[i]);
+            if (weights[i].compareTo(weights[largest]) > 0) largest = i;
+        }
+        out[largest] = out[largest].add(total.subtract(given));
+        return out;
     }
 
     private static BigDecimal lineDiscount(Offer o, Line l, BigDecimal lineTotal) {

@@ -56,6 +56,10 @@ public class VatPricing {
             lineTotal, discount, l.netAmount(), l.taxAmount(), l.offer());
     }
 
+    private static com.waha.order.dto.CouponView couponWithVat(com.waha.order.dto.CouponView c, BigDecimal rate) {
+        return c == null ? null : new com.waha.order.dto.CouponView(c.code(), c.offerName(), withVat(c.discountAmount(), rate));
+    }
+
     private static BigDecimal discountOf(List<OrderItemView> items) {
         return items.stream().map(OrderItemView::discountAmount).reduce(BigDecimal.ZERO, BigDecimal::add);
     }
@@ -63,7 +67,8 @@ public class VatPricing {
     public QuoteResponse forQuote(QuoteResponse q, long organizationId, BigDecimal rate) {
         if (!showWithVat(organizationId)) return q;
         List<OrderItemView> items = q.items().stream().map(l -> inclusive(l, rate)).toList();
-        return new QuoteResponse(q.subtotal(), q.tax(), q.total(), items, discountOf(items), q.invoiceOffer());
+        return new QuoteResponse(q.subtotal(), q.tax(), q.total(), items, discountOf(items), q.invoiceOffer(),
+            couponWithVat(q.coupon(), rate));
     }
 
     // Only for what customer apps and the dashboard show. Invoices and Odoo use the stored values.
@@ -72,6 +77,7 @@ public class VatPricing {
         List<OrderItemView> items = o.items().stream().map(l -> inclusive(l, o.taxRate())).toList();
         return new OrderResponse(o.orderId(), o.displayId(), o.storeId(), o.wasCreated(), o.status(), o.username(),
             o.subtotal(), o.tax(), o.total(), o.taxRate(), o.currency(), o.paymentReference(), o.paymentMethod(),
-            o.invoiceUrl(), o.createdAt(), items, o.payments(), discountOf(items), o.invoiceOffer());
+            o.invoiceUrl(), o.createdAt(), items, o.payments(), discountOf(items), o.invoiceOffer(),
+            couponWithVat(o.coupon(), o.taxRate()));
     }
 }

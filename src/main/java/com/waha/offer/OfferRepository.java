@@ -41,6 +41,26 @@ public class OfferRepository {
         return offers;
     }
 
+    // One offer by id with its products, for coupons. Empty when it does not exist or was deleted. Enabled state,
+    // dates and the activation mode are for the caller to check.
+    public Optional<Offer> loadById(long id) {
+        List<Offer> base = jdbc.query("SELECT * FROM offers WHERE id = ? AND deleted_at IS NULL",
+            (rs, i) -> toOffer(rs, Set.of()), id);
+        if (base.isEmpty()) return Optional.empty();
+        Offer o = base.get(0);
+        Set<Long> products = productsOf(List.of(id)).getOrDefault(id, Set.of());
+        return Optional.of(new Offer(o.id(), o.organizationId(), o.name(), o.type(), o.discountMode(), o.discountValue(),
+            o.maxDiscountAmount(), o.startDate(), o.endDate(), o.enabled(), o.storeScope(), products, o.activationMode()));
+    }
+
+    // Whether the offer's store scope includes the store (the offer's client is checked by the caller).
+    public boolean offerCoversStore(Offer offer, long storeId) {
+        if (!"SOME".equals(offer.storeScope())) return true;
+        Integer n = jdbc.queryForObject("SELECT COUNT(*) FROM offer_stores WHERE offer_id = ? AND store_id = ?",
+            Integer.class, offer.id(), storeId);
+        return n != null && n > 0;
+    }
+
     public void clearCache() {
         byStore.clear();
     }

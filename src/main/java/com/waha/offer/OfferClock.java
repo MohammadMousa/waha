@@ -20,4 +20,9 @@ public class OfferClock {
     public LocalDate today() {
         return LocalDate.now(zone);
     }
+
+    // Local date-time in the same zone (coupon start and expiry).
+    public java.time.LocalDateTime now() {
+        return java.time.LocalDateTime.now(zone);
+    }
 }

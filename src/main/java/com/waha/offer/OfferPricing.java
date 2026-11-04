@@ -18,7 +18,13 @@ public class OfferPricing {
     }
 
     public PricingEngine.Result price(long storeId, List<PricingEngine.Line> lines, BigDecimal vatRate) {
-        return PricingEngine.price(lines, currentOffers(storeId), vatRate);
+        return price(storeId, lines, vatRate, null);
+    }
+
+    // coupon is null when none was submitted.
+    public PricingEngine.Result price(long storeId, List<PricingEngine.Line> lines, BigDecimal vatRate,
+                                      PricingEngine.CouponInput coupon) {
+        return PricingEngine.price(lines, currentOffers(storeId), vatRate, coupon);
     }
 
     // Automatic offers valid today for a store (pricing and kiosk badges). Offers that need a coupon are never in it.

@@ -25,5 +25,6 @@ public record OrderResponse(
     List<OrderItemView> items,
     List<PaymentRecord> payments,  // all payment attempts, newest first
     BigDecimal discountAmount,     // total discount of the order (0 when no offer applied)
-    AppliedOfferView invoiceOffer  // invoice-level offer (null when none)
+    AppliedOfferView invoiceOffer, // invoice-level offer (null when none)
+    CouponView coupon              // coupon used (null when none); its discount is part of discountAmount
 ) {}

@@ -30,7 +30,8 @@ public class OrderController {
         try {
             QuoteRequest resolved = new QuoteRequest(
                 sessionService.resolveStoreId(request.storeId(), authHeader),
-                request.items()
+                request.items(),
+                request.couponCode()
             );
             return ResponseEntity.ok(orderService.quote(resolved));
         } catch (InvalidRequestException e) {
@@ -39,6 +40,8 @@ public class OrderController {
             return ResponseEntity.status(409).body(new ErrorResponse(e.getMessage()));
         } catch (OrderTotalNotPositiveException e) {
             return totalNotPositive(e);
+        } catch (com.waha.coupon.CouponException e) {
+            return couponRejected(e);
         }
     }
 
@@ -56,7 +59,8 @@ public class OrderController {
                 sessionService.resolveStoreId(request.storeId(), authHeader),
                 request.orderId(),
                 sessionService.resolveUsername(request.username(), authHeader),
-                request.items()
+                request.items(),
+                request.couponCode()
             );
             return ResponseEntity.ok(orderService.createOrder(resolved));
         } catch (InvalidRequestException e) {
@@ -65,7 +69,14 @@ public class OrderController {
             return ResponseEntity.status(409).body(new ErrorResponse(e.getMessage()));
         } catch (OrderTotalNotPositiveException e) {
             return totalNotPositive(e);
+        } catch (com.waha.coupon.CouponException e) {
+            return couponRejected(e);
         }
+    }
+
+    // A submitted code that cannot be used is never ignored: the customer is told why.
+    private static ResponseEntity<?> couponRejected(com.waha.coupon.CouponException e) {
+        return ResponseEntity.status(422).body(java.util.Map.of("error", e.code, "message", e.getMessage()));
     }
 
     private static ResponseEntity<?> totalNotPositive(OrderTotalNotPositiveException e) {

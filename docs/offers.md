@@ -1,14 +1,8 @@
 # Offers (auto-applied promotions) — Phase 1
-
-Source: "Waha Offers (Auto-Applied Promotions) — Phase 1 Spec" (v0.1, 2026-10-19) and the Smart Retail
-Offer screens. This file describes what the backend does. Promo codes, usage limits, buy-X-get-Y,
-customer segments and Odoo promotion sync are out of scope (Phase 2).
-
 An offer is applied **automatically** at pricing time. There is no code to type and nothing for the customer to do.
 The server prices every cart; the kiosk only shows what the server returns and never calculates a discount.
 
 ## Terms
-
 | Smart Retail | Waha |
 |---|---|
 | Client | Organization (`organization_id`) |
@@ -17,7 +11,6 @@ The server prices every cart; the kiosk only shows what the server returns and n
 | Product offer | Line-level offer: discounts selected products |
 
 ## Offer fields
-
 | Field | Rules |
 |---|---|
 | name | Required, up to 120 characters, not unique |
@@ -39,7 +32,6 @@ the store is in scope and belongs to the offer's client, and (for product offers
 Dates are evaluated on the server in Riyadh time (stores have no timezone field yet). The kiosk clock is never used.
 
 ## Pricing order (one place, used by quote, order creation, invoices)
-
 1. Take each line's price from the product.
 2. Pick the product offer for each line. If several match, the largest discount in money wins; ties go to the newest offer.
    - Percentage: applied to the line total.
@@ -59,7 +51,6 @@ because the global offer works on what remains after line discounts. Offers neve
 All money is `DECIMAL(12,2)`.
 
 ## Stored data
-
 - `orders.subtotal_amount` is the **net** amount after all discounts, so `total = subtotal + tax` still holds.
   `orders.discount_amount` is the total discount of the order (0 for older orders).
 - `order_items.discount_amount` is the line's own discount plus its share of the global one;
@@ -70,7 +61,6 @@ All money is `DECIMAL(12,2)`.
   and value at order time and the discount actually given. Editing or deleting an offer never changes past orders.
 
 ## Admin API
-
 All calls use the normal bearer token. Managing needs `MANAGE_OFFERS` (client manager / organization owner);
 viewing needs `VIEW_OFFERS` (branch admin, operator). Every change is written to the audit log with the user and before/after values.
 
@@ -93,7 +83,6 @@ List reply: `{ "items": [...], "totalCount", "page", "size" }` (page starts at 0
 Validation errors are returned per field and are also enforced by the API, not only the screen.
 
 ## Kiosk API (additions only; old fields do not change)
-
 - `POST /api/orders/quote`: every line also returns `originalUnitPrice`, `discountAmount`, `netAmount`, `taxAmount`
   and `offer` (id and name, or null). The reply also returns `discountAmount` (total) and `invoiceOffer` (or null).
   `subtotal`, `tax`, `total` keep their meaning (subtotal is net).
@@ -105,26 +94,21 @@ Validation errors are returned per field and are also enforced by the API, not o
 - If pricing cannot be reached the kiosk blocks checkout; it never falls back to local discount math.
 
 ## Odoo
-
 Orders pushed to Odoo carry the discount on each line, so Odoo's session total equals what the customer paid.
 Odoo does not need offers; nothing is created or pulled there. Each POS line is sent with the original unit price,
 the discount as a percentage (Odoo's own field, rounded to 2 decimals, informational), and the exact line subtotal and
 subtotal with tax that Waha charged, so the totals match to the cent whatever the percentage rounds to.
-Orders queued before offers existed keep the old calculation. Status: written, **not yet verified against a live Odoo**
-(the test database `hrco26` no longer exists). Verify on a test Odoo before the first discounted order reaches the client's Odoo.
+Orders queued before offers existed keep the old calculation. 
 
 ## Feature level
-
 Backend `api_level` becomes 2 with this feature (see `docs/api-levels.md`). Dashboard and kiosk hide offers
 until the backend reports level 2 or higher.
 
 ## Caching
-
 Active offers are cached per store for 60 seconds and the cache is cleared when an offer is created, changed, enabled,
 disabled or deleted.
 
 ## Decisions taken (spec questions)
-
 | # | Decision |
 |---|---|
 | Q1 | A product offer and a global offer stack; largest wins within each type |
@@ -134,5 +118,4 @@ disabled or deleted.
 | Q5 | Client managers manage offers; staff roles view only |
 | Q6 | End date includes the whole day |
 | Q7 | Kiosk shows badges on product tiles |
-| - | The "For Limited Time" toggle is dropped; dates stay required |
 | - | No offline orders or refunds exist yet; discounts are stored per line and per order so a future refund can use them |
