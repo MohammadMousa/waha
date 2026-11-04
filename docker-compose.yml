@@ -6,7 +6,8 @@ services:
     environment:
       MYSQL_ROOT_PASSWORD: root
       MYSQL_DATABASE: waha
-    command: --innodb-buffer-pool-size=1G
+    command: --innodb-buffer-pool-size=384M
+    restart: unless-stopped
     volumes:
       - mysql_data:/var/lib/mysql
     ports:
@@ -26,7 +27,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    restart: on-failure:5   # self-heals from the MySQL-not-quite-ready race on first boot
+    restart: unless-stopped   # also self-heals from the MySQL-not-quite-ready race on first boot
     depends_on:
       mysql:
         condition: service_healthy
@@ -34,6 +35,7 @@ services:
       DB_HOST: mysql
       DB_USER: root
       DB_PASSWORD: root
+      JAVA_TOOL_OPTIONS: "-Xmx512m"   # keeps the JVM from growing into the database's share of a small server
       # Pulled from a real .env file (not .env.example2) sitting next to
       # this docker-compose.yml - Compose substitutes ${VAR} from .env
       # automatically, no extra flag needed. Empty string if unset, not an
