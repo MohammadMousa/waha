@@ -126,8 +126,8 @@ public class LastSeenTracker {
         jdbc.update("UPDATE user_sessions SET last_seen_at = ?, app_version = COALESCE(?, app_version) WHERE token = ?",
             at, s.appVersion(), token);
         if (s.deviceId() > 0) {
-            jdbc.update("UPDATE devices SET last_seen_at = ?, app_version = COALESCE(?, app_version) WHERE id = ?",
-                at, s.appVersion(), s.deviceId());
+            jdbc.update("UPDATE devices SET last_seen_at = ? WHERE id = ?",
+                at, s.deviceId());
         }
     }
 

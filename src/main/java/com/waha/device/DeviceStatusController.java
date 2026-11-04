@@ -62,9 +62,34 @@ public class DeviceStatusController {
         boolean monitoring = hb > 0;
         Instant now = Instant.now();
 
+        // App version = the version of the device's newest live session (none when it has no session).
+        Map<Long, String> versions = new HashMap<>();
+        Map<Long, Instant> versionAt = new HashMap<>();
+        jdbc.query("""
+            SELECT us.token, us.device_id, us.created_at, us.last_seen_at, us.app_version
+            FROM user_sessions us JOIN devices d ON d.id = us.device_id
+            WHERE d.organization_id = :org
+            """, Map.of("org", orgId), rs -> {
+                long did = rs.getLong("device_id");
+                Timestamp ts = rs.getTimestamp("last_seen_at");
+                if (ts == null) ts = rs.getTimestamp("created_at");
+                Instant at = ts != null ? ts.toInstant() : Instant.EPOCH;
+                String v = rs.getString("app_version");
+                var mem = lastSeen.getSession(rs.getString("token"));
+                if (mem.isPresent()) {
+                    if (mem.get().at().isAfter(at)) at = mem.get().at();
+                    if (mem.get().appVersion() != null) v = mem.get().appVersion();
+                }
+                Instant prev = versionAt.get(did);
+                if (prev == null || at.isAfter(prev)) {
+                    versionAt.put(did, at);
+                    versions.put(did, v);
+                }
+            });
+
         List<Map<String, Object>> rows = jdbc.query("""
             SELECT d.id, d.username, d.name, d.device_type, d.enabled, d.store_id, s.name AS store_name,
-                   d.last_seen_at, d.app_version,
+                   d.last_seen_at,
                    (SELECT o.created_at FROM orders o WHERE o.username = d.username
                       AND o.organization_id = d.organization_id ORDER BY o.created_at DESC LIMIT 1) AS last_order_at,
                    (SELECT o.status FROM orders o WHERE o.username = d.username
@@ -76,12 +101,9 @@ public class DeviceStatusController {
                 long id = rs.getLong("id");
                 Timestamp dbSeen = rs.getTimestamp("last_seen_at");
                 Instant seen = dbSeen != null ? dbSeen.toInstant() : null;
-                String version = rs.getString("app_version");
+                String version = versions.get(id);
                 var mem = lastSeen.get(id);
-                if (mem.isPresent()) {
-                    if (seen == null || mem.get().at().isAfter(seen)) seen = mem.get().at();
-                    if (mem.get().appVersion() != null) version = mem.get().appVersion();
-                }
+                if (mem.isPresent() && (seen == null || mem.get().at().isAfter(seen))) seen = mem.get().at();
                 Map<String, Object> m = new LinkedHashMap<>();
                 m.put("id",          id);
                 m.put("username",    rs.getString("username"));
