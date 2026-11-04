@@ -56,6 +56,7 @@ public class MissingProductController {
                                   @RequestParam(defaultValue = "open") String status,
                                   @RequestParam(defaultValue = "last") String sort,
                                   @RequestParam(defaultValue = "desc") String dir,
+                                  @RequestParam(defaultValue = "record") String groupBy,
                                   @RequestParam(defaultValue = "0") int page,
                                   @RequestParam(defaultValue = "50") int size) {
         UserSession session = sessionService.requireSession(auth);
@@ -63,6 +64,8 @@ public class MissingProductController {
         if (session.organizationId() <= 0) return orgRequired();
         if (!Set.of("open", "created", "all").contains(status))
             return ResponseEntity.badRequest().body(new ErrorResponse("status must be open, created or all"));
+        if (!Set.of("record", "barcode").contains(groupBy))
+            return ResponseEntity.badRequest().body(new ErrorResponse("groupBy must be record or barcode"));
         MapSqlParameterSource p = new MapSqlParameterSource("org", session.organizationId());
         StringBuilder where = new StringBuilder("WHERE s.organization_id = :org ");
         if (storeId != null) { where.append("AND m.store_id = :store "); p.addValue("store", storeId); }
@@ -93,7 +96,11 @@ public class MissingProductController {
                 .addValue("week", Timestamp.from(java.time.Instant.now().minus(java.time.Duration.ofDays(7)))));
 
         String statusSql = status.equals("open") ? "AND p.id IS NULL " : status.equals("created") ? "AND p.id IS NOT NULL " : "";
+        if (groupBy.equals("barcode")) return listByBarcode(p, where.toString(), statusSql, sort, dir, page, size);
         String col = switch (sort) {
+            case "store" -> "s.name";
+            case "user" -> "m.last_username";
+            case "status" -> "(p.id IS NOT NULL)";
             case "count" -> "m.miss_count";
             case "first" -> "m.first_missed_at";
             case "barcode" -> "m.barcode";
@@ -109,6 +116,102 @@ public class MissingProductController {
             + "ORDER BY " + col + " " + order + ", m.id DESC LIMIT :lim OFFSET :off", p, (rs, i) -> row(rs));
 
         Map<String, Object> out = new LinkedHashMap<>();
+        out.put("summary", Map.of("missingProducts", cards.get("missing"), "scansMissed", cards.get("scans"),
+            "missedLast7Days", cards.get("recent"), "created", cards.get("created")));
+        out.put("rows", rows);
+        out.put("page", pg);
+        out.put("size", sz);
+        out.put("total", total);
+        return ResponseEntity.ok(out);
+    }
+
+    // One row per barcode across all branches of the organization.
+    private ResponseEntity<?> listByBarcode(MapSqlParameterSource p, String where, String statusSql,
+                                            String sort, String dir, int page, int size) {
+        String base = "SELECT m.barcode, MAX(p.id) AS pid, MAX(p.price) AS pprice, SUM(m.miss_count) AS scans, "
+            + "COUNT(DISTINCT m.store_id) AS branches, MIN(m.first_missed_at) AS first_at, MAX(m.last_missed_at) AS last_at "
+            + FROM_SQL + where + statusSql + "GROUP BY m.barcode";
+        // Cards over the same filters (status ignored), counted per barcode.
+        String cardBase = "SELECT m.barcode, MAX(p.id) AS pid, SUM(m.miss_count) AS scans, MAX(m.last_missed_at) AS last_at "
+            + FROM_SQL + where + "GROUP BY m.barcode";
+        Map<String, Object> cards = jdbc.queryForMap(
+            "SELECT COUNT(CASE WHEN pid IS NULL THEN 1 END) AS missing, "
+            + "COALESCE(SUM(CASE WHEN pid IS NULL THEN scans END), 0) AS scans, "
+            + "COUNT(CASE WHEN pid IS NULL AND last_at >= :week THEN 1 END) AS recent, "
+            + "COUNT(CASE WHEN pid IS NOT NULL THEN 1 END) AS created FROM (" + cardBase + ") g",
+            new MapSqlParameterSource(p.getValues())
+                .addValue("week", Timestamp.from(java.time.Instant.now().minus(java.time.Duration.ofDays(7)))));
+
+        String col = switch (sort) {
+            case "scans", "count" -> "scans";
+            case "branches" -> "branches";
+            case "first" -> "first_at";
+            case "status" -> "(pid IS NOT NULL)";
+            case "barcode" -> "barcode";
+            default -> "last_at";
+        };
+        String order = dir.equalsIgnoreCase("asc") ? "ASC" : "DESC";
+        int sz = Math.min(Math.max(size, 1), 200), pg = Math.max(page, 0);
+        Long total = jdbc.queryForObject("SELECT COUNT(*) FROM (" + base + ") g", p, Long.class);
+        p.addValue("lim", sz).addValue("off", pg * sz);
+        List<Map<String, Object>> rows = jdbc.query("SELECT * FROM (" + base + ") g ORDER BY " + col + " " + order
+            + ", barcode LIMIT :lim OFFSET :off", p, (rs, i) -> {
+                Map<String, Object> r = new LinkedHashMap<>();
+                r.put("barcode", rs.getString("barcode"));
+                r.put("scans", rs.getLong("scans"));
+                r.put("branches", rs.getLong("branches"));
+                r.put("firstMissedAt", rs.getTimestamp("first_at").toInstant());
+                r.put("lastMissedAt", rs.getTimestamp("last_at").toInstant());
+                long pid = rs.getLong("pid");
+                r.put("pid", rs.wasNull() ? null : pid);
+                r.put("pprice", rs.getBigDecimal("pprice"));
+                return r;
+            });
+
+        // Details of the page's barcodes: records, branch names, latest user, product name.
+        if (!rows.isEmpty()) {
+            List<String> codes = rows.stream().map(r -> (String) r.get("barcode")).toList();
+            Map<String, List<Long>> ids = new HashMap<>();
+            Map<String, TreeSet<String>> stores = new HashMap<>();
+            Map<String, String> users = new HashMap<>();
+            Map<String, Timestamp> userAt = new HashMap<>();
+            jdbc.query("SELECT m.id, m.barcode, s.name AS store_name, m.last_username, m.last_missed_at "
+                + "FROM product_missing m JOIN stores s ON s.id = m.store_id WHERE s.organization_id = :org AND m.barcode IN (:codes)",
+                new MapSqlParameterSource("org", p.getValue("org")).addValue("codes", codes), rs -> {
+                    String b = rs.getString("barcode");
+                    ids.computeIfAbsent(b, k -> new ArrayList<>()).add(rs.getLong("id"));
+                    stores.computeIfAbsent(b, k -> new TreeSet<>()).add(rs.getString("store_name"));
+                    String u = rs.getString("last_username");
+                    Timestamp at = rs.getTimestamp("last_missed_at");
+                    if (u != null && (userAt.get(b) == null || at.after(userAt.get(b)))) { users.put(b, u); userAt.put(b, at); }
+                });
+            Map<Long, String> names = new HashMap<>();
+            List<Long> pids = rows.stream().map(r -> (Long) r.get("pid")).filter(Objects::nonNull).toList();
+            if (!pids.isEmpty()) {
+                jdbc.query("SELECT id, name FROM products WHERE id IN (:ids)", Map.of("ids", pids),
+                    rs -> { names.put(rs.getLong("id"), rs.getString("name")); });
+            }
+            for (Map<String, Object> r : rows) {
+                String b = (String) r.get("barcode");
+                r.put("storeNames", new ArrayList<>(stores.getOrDefault(b, new TreeSet<>())));
+                r.put("lastUsername", users.get(b));
+                r.put("recordIds", ids.getOrDefault(b, List.of()));
+                Long pid = (Long) r.remove("pid");
+                java.math.BigDecimal price = (java.math.BigDecimal) r.remove("pprice");
+                if (pid == null) {
+                    r.put("product", null);
+                } else {
+                    Map<String, Object> prod = new LinkedHashMap<>();
+                    prod.put("id", pid);
+                    prod.put("name", parse(names.get(pid)));
+                    prod.put("price", price);
+                    r.put("product", prod);
+                }
+            }
+        }
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("groupBy", "barcode");
         out.put("summary", Map.of("missingProducts", cards.get("missing"), "scansMissed", cards.get("scans"),
             "missedLast7Days", cards.get("recent"), "created", cards.get("created")));
         out.put("rows", rows);
@@ -145,7 +248,7 @@ public class MissingProductController {
         try { return raw == null ? null : mapper.readTree(raw); } catch (Exception e) { return null; }
     }
 
-    record RemoveRequest(List<Long> ids) {}
+    record RemoveRequest(List<Long> ids, List<String> barcodes) {}
 
     // Removes the chosen records.
     @PostMapping("/remove")
@@ -154,11 +257,27 @@ public class MissingProductController {
         UserSession session = sessionService.requireSession(auth);
         sessionService.requirePermissionForOrg(session, Permission.EDIT_PRODUCTS, session.organizationId());
         if (session.organizationId() <= 0) return orgRequired();
-        if (body == null || body.ids() == null || body.ids().isEmpty())
-            return ResponseEntity.badRequest().body(new ErrorResponse("ids is required"));
-        if (body.ids().size() > MAX_REMOVE)
-            return ResponseEntity.badRequest().body(new ErrorResponse("At most " + MAX_REMOVE + " ids per call"));
+        boolean hasIds = body != null && body.ids() != null && !body.ids().isEmpty();
+        boolean hasCodes = body != null && body.barcodes() != null && !body.barcodes().isEmpty();
+        if (!hasIds && !hasCodes)
+            return ResponseEntity.badRequest().body(new ErrorResponse("ids or barcodes is required"));
+        if ((hasIds ? body.ids().size() : 0) + (hasCodes ? body.barcodes().size() : 0) > MAX_REMOVE)
+            return ResponseEntity.badRequest().body(new ErrorResponse("At most " + MAX_REMOVE + " ids or barcodes per call"));
         tracker.flushNow();
+        if (!hasIds) {
+            // By barcode: every record of those barcodes in every branch of the organization.
+            List<String> codes = body.barcodes().stream().filter(Objects::nonNull).map(String::trim).distinct().toList();
+            List<Map<String, Object>> found = jdbc.queryForList(
+                "SELECT m.id, m.store_id, m.barcode FROM product_missing m JOIN stores s ON s.id = m.store_id "
+                + "WHERE s.organization_id = :org AND m.barcode IN (:codes)",
+                new MapSqlParameterSource("org", session.organizationId()).addValue("codes", codes));
+            List<Long> foundIds = found.stream().map(f -> ((Number) f.get("id")).longValue()).toList();
+            Map<String, Object> res = new LinkedHashMap<>(delete(found, foundIds));
+            Set<String> hit = new HashSet<>();
+            for (Map<String, Object> f : found) hit.add((String) f.get("barcode"));
+            res.put("notFound", codes.stream().filter(c -> !hit.contains(c)).toList());
+            return ResponseEntity.ok(res);
+        }
         List<Long> ids = body.ids().stream().distinct().toList();
         List<Map<String, Object>> found = jdbc.queryForList(
             "SELECT m.id, m.store_id, m.barcode FROM product_missing m JOIN stores s ON s.id = m.store_id "
