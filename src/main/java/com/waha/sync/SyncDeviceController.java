@@ -5,6 +5,7 @@ import com.waha.auth.SessionService;
 import com.waha.auth.UserSession;
 import com.waha.common.ErrorResponse;
 import com.waha.common.ForbiddenException;
+import com.waha.config.ConfigService;
 import com.waha.device.DeviceRepository;
 import com.waha.pricing.VatPricing;
 import com.waha.store.StoreRepository;
@@ -28,16 +29,18 @@ public class SyncDeviceController {
     private final VatPricing vatPricing;
     private final JdbcTemplate jdbc;
     private final OfflineOrderService orderService;
+    private final ConfigService configService;
 
     public SyncDeviceController(SessionService sessionService, DeviceRepository deviceRepository,
                                 StoreRepository storeRepository, VatPricing vatPricing, JdbcTemplate jdbc,
-                                OfflineOrderService orderService) {
+                                OfflineOrderService orderService, ConfigService configService) {
         this.sessionService = sessionService;
         this.deviceRepository = deviceRepository;
         this.storeRepository = storeRepository;
         this.vatPricing = vatPricing;
         this.jdbc = jdbc;
         this.orderService = orderService;
+        this.configService = configService;
     }
 
     @GetMapping("/device-config")
@@ -58,6 +61,9 @@ public class SyncDeviceController {
         body.put("vatRate", store.vatRate());
         body.put("pricesIncludeVat", vatPricing.showWithVat(d.organizationId()));
         body.put("shortCode", shortCode(d.storeId()));
+        // Same host the server puts in invoiceUrl; the kiosk writes <invoiceBaseUrl>/api/invoices/<orderId>.
+        String base = configService.getPublicBaseUrl();
+        body.put("invoiceBaseUrl", base == null ? null : base.replaceAll("/+$", ""));
         body.put("lastReferenceSerial", orderService.lastReferenceSerial(d.id()));
         return ResponseEntity.ok(body);
     }

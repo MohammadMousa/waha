@@ -12,15 +12,47 @@ properties calls (`GET /api/admin/organization/properties/keys` lists them with 
 |---|---|
 | offline_mode | false |
 | sync_pull_start_delay_seconds | 60 |
-| sync_pull_interval_minutes | 10 |
+| sync_stagger_seconds | 180 |
+| sync_pull_interval_minutes | 60 |
 | sync_pull_patch_size | 200 |
 | sync_pull_timeout_seconds | 30 |
 | sync_idle_seconds | 10 |
-| sync_push_interval_seconds | 60 |
+| sync_push_interval_minutes | 3 |
 | sync_push_timeout_seconds | 60 |
 | sync_push_retry_max_delay_minutes | 15 |
 | push_paid_orders_only | true |
 | scan_disabled_products | false |
+| offline_unpaid_cleanup_enabled | false |
+| offline_unpaid_cleanup_days_offset | 15 |
+| offline_audit_cleanup | false |
+
+Local cleanup (kiosk side, read from `GET /api/config`):
+- `offline_unpaid_cleanup_enabled` (true/false): the kiosk deletes local orders that are still unpaid (never sent) and older than
+  `offline_unpaid_cleanup_days_offset` days (allowed 1 to 365). Paid orders and dead-lettered orders are never deleted by it.
+- `offline_audit_cleanup` (true/false): the kiosk deletes local audit info older than the same days offset, only for orders
+  already sent to the server. Unsent paid orders and dead-lettered orders keep theirs, because the device holds the only copy.
+
+Staggering (kiosk side, so many devices do not start together after an outage, a mass reboot or the auto-restart):
+- Once per app start the kiosk computes `delay = sync_pull_start_delay_seconds + (hash(deviceId) mod sync_stagger_seconds) + small random jitter`
+  and keeps it until the next restart. The timer still decides when cycles happen; before a pull the kiosk checks that its delay has passed.
+- `sync_stagger_seconds` is read from `GET /api/config` at app start, so a changed value applies at the next restart. Allowed 30 to 3600;
+  there is no "off" value, and the kiosk clamps anything below 30 up to 30.
+- Add about 10% random jitter to the pull interval (computed once per start) and about 20% to every failed-order retry. Paid orders are never delayed.
+- Scheduling uses a monotonic clock; cursors use server time. A pull cancelled by customer activity resumes from its saved cursor.
+- After connectivity returns, do one pull after a random 0 to 60 seconds. Honor `Retry-After` if the server ever answers 429 or 503 (it does not today).
+- Send the status call only when the numbers changed, or about every 10 minutes at most.
+- Not used: slot or modulo scheduling, server-side queues, cache or version tables. The server could later add a stateless limit
+  (429 with `Retry-After`) or a "next pull in N seconds" hint if device status shows the server struggling.
+
+Why these defaults (owner's notes):
+- The defaults are deliberately gentle so that many devices cannot load the server without anyone noticing. A pull every 60
+  minutes and a retry every 3 minutes keep the load low even with many branches.
+- A new device is normally prepared and fully synced before it is deployed, so the first sync does not depend on the interval.
+- A company that changes prices often can lower `sync_pull_interval_minutes` for its organization (allowed 1 to 1440); a price change
+  or a disabled product then reaches kiosks sooner. The cost is more requests, so lower it only where it is needed.
+- `sync_push_interval_minutes` (allowed 1 to 60) is only the retry of orders that failed or were waiting: a paid order is always
+  pushed at once, and the retry delay still backs off up to `sync_push_retry_max_delay_minutes` while the server stays down.
+- With the 60-minute default a change can take up to an hour (plus the idle wait) to reach a kiosk. That is accepted.
 
 `scan_disabled_products`: when false a disabled product is refused on scan and on order creation (online today: 409
 "not currently sellable"). When true it can be scanned and sold. The kiosk applies the same rule to its local scan
@@ -42,11 +74,13 @@ Response: `{ "items": [...], "last": true|false, "next": {"since": "...", "after
 - The kiosk must not take orders until products, barcodes and payment-methods have each completed one full pull.
 
 ## 3. Device config for starting offline (GET /api/sync/device-config)
-`{ deviceId, deviceNo, storeId, organizationId, currency, vatRate, pricesIncludeVat, shortCode, lastReferenceSerial }`
+`{ deviceId, deviceNo, storeId, organizationId, currency, vatRate, pricesIncludeVat, shortCode, invoiceBaseUrl, lastReferenceSerial }`
 - No parameters: it uses the logged-in device session (403 for a non-device session). `vatRate` is a fraction (0.15).
 - `deviceNo` (1..99, unique per store) is set on the dashboard device screen; if none is sent when a device is created the server
   assigns the lowest free number, and existing devices were numbered by the migration. Never null.
 - `shortCode`: the store's optional prefix for order references (for example `WH`), or `null`.
+- `invoiceBaseUrl`: the same public host the server puts in `invoiceUrl` (no trailing slash). The kiosk builds the invoice QR link as
+  `<invoiceBaseUrl>/api/invoices/<orderId>`.
 - `lastReferenceSerial`: the 3-digit serial of this device's latest order reference (0 to 999), or `null` when none. Continue from it
   after a reinstall.
 - Sync status: the kiosk reports `POST /api/sync/status` `{ lastPullAt, lastPushAt, pendingOrders, failedOrders }` (all optional;
@@ -140,7 +174,7 @@ Errors: `{ "error": "CODE", "message": "...", "retryable": true|false }`
 
 ## 7. Push rules (kiosk)
 - A paid order is saved in SQLite first, then pushed at once. On failure it stays PENDING.
-- A scheduler every `sync_push_interval_seconds` pushes all PENDING orders. Back off up to `sync_push_retry_max_delay_minutes`.
+- A paid order is pushed at once; a scheduler every `sync_push_interval_minutes` retries all PENDING orders. Back off up to `sync_push_retry_max_delay_minutes`.
 - Push is never paused by customer activity. Pull is, and an in-flight pull request is cancelled at once on activity.
 - With `push_paid_orders_only` true, unpaid orders stay local.
 - Dead-letter list in settings with a retry button.

@@ -51,22 +51,30 @@ public class OrgPropertiesController {
             new PropertySpec("boolean", "Kiosks keep selling from a local copy of the catalog and send orders later (default false)", "true or false"));
         KNOWN_KEYS.put("sync_pull_start_delay_seconds",
             new PropertySpec("integer", "Seconds the kiosk waits after starting before its first catalog pull (default 60)", "0–3600 seconds"));
+        KNOWN_KEYS.put("sync_stagger_seconds",
+            new PropertySpec("integer", "Kiosks spread their first sync after a start over this many seconds so they do not all hit the server together (default 180)", "30–3600 seconds"));
         KNOWN_KEYS.put("sync_pull_interval_minutes",
-            new PropertySpec("integer", "Minutes between catalog pulls (default 10)", "1–1440 minutes"));
+            new PropertySpec("integer", "Minutes between catalog pulls (default 60)", "1–1440 minutes"));
         KNOWN_KEYS.put("sync_pull_patch_size",
             new PropertySpec("integer", "Rows per catalog pull page (default 200)", "10–500 rows"));
         KNOWN_KEYS.put("sync_pull_timeout_seconds",
             new PropertySpec("integer", "Seconds the kiosk waits for one pull page (default 30)", "5–120 seconds"));
         KNOWN_KEYS.put("sync_idle_seconds",
             new PropertySpec("integer", "Seconds without scans or touches before the kiosk starts a pull (default 10)", "1–300 seconds"));
-        KNOWN_KEYS.put("sync_push_interval_seconds",
-            new PropertySpec("integer", "Seconds between attempts to send waiting orders (default 60)", "10–3600 seconds"));
+        KNOWN_KEYS.put("sync_push_interval_minutes",
+            new PropertySpec("integer", "Minutes between attempts to send waiting orders; a paid order is also sent at once (default 3)", "1–60 minutes"));
         KNOWN_KEYS.put("sync_push_timeout_seconds",
             new PropertySpec("integer", "Seconds the kiosk waits for the server to accept an order (default 60)", "10–300 seconds"));
         KNOWN_KEYS.put("sync_push_retry_max_delay_minutes",
             new PropertySpec("integer", "Longest wait between retries of a failed order send (default 15)", "1–240 minutes"));
         KNOWN_KEYS.put("scan_disabled_products",
             new PropertySpec("boolean", "A disabled product can still be scanned and sold, online and offline (default false)", "true or false"));
+        KNOWN_KEYS.put("offline_unpaid_cleanup_enabled",
+            new PropertySpec("boolean", "Kiosks delete unpaid local orders older than the days offset (default false)", "true or false"));
+        KNOWN_KEYS.put("offline_unpaid_cleanup_days_offset",
+            new PropertySpec("integer", "Age in days; local unpaid orders (and audit info, when its cleanup is on) older than this are deleted (default 15)", "1–365 days"));
+        KNOWN_KEYS.put("offline_audit_cleanup",
+            new PropertySpec("boolean", "Kiosks delete local audit info of already-sent orders older than the days offset (default false)", "true or false"));
         KNOWN_KEYS.put("push_paid_orders_only",
             new PropertySpec("boolean", "Kiosks send only paid orders; unpaid ones stay on the device (default true)", "true or false"));
     }
@@ -198,15 +206,18 @@ public class OrgPropertiesController {
                     : "auto_log_upload_enabled must be 'true' or 'false'";
             }
             case "sync_pull_start_delay_seconds"     -> intInRange(key, value, 0, 3600);
+            case "sync_stagger_seconds"              -> intInRange(key, value, 30, 3600);
             case "sync_pull_interval_minutes"        -> intInRange(key, value, 1, 1440);
             case "sync_pull_patch_size"              -> intInRange(key, value, 10, 500);
             case "sync_pull_timeout_seconds"         -> intInRange(key, value, 5, 120);
             case "sync_idle_seconds"                 -> intInRange(key, value, 1, 300);
-            case "sync_push_interval_seconds"        -> intInRange(key, value, 10, 3600);
+            case "sync_push_interval_minutes"        -> intInRange(key, value, 1, 60);
             case "sync_push_timeout_seconds"         -> intInRange(key, value, 10, 300);
             case "sync_push_retry_max_delay_minutes" -> intInRange(key, value, 1, 240);
+            case "offline_unpaid_cleanup_days_offset" -> intInRange(key, value, 1, 365);
             case "enable_logging", "device_auto_restart_enabled", "prices_exclude_vat",
-                 "offline_mode", "push_paid_orders_only", "scan_disabled_products" -> {
+                 "offline_mode", "push_paid_orders_only", "scan_disabled_products",
+                 "offline_unpaid_cleanup_enabled", "offline_audit_cleanup" -> {
                 String v = value.trim().toLowerCase();
                 yield (v.equals("true") || v.equals("false")) ? null
                     : key + " must be 'true' or 'false'";
