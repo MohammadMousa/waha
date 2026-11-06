@@ -57,8 +57,25 @@ public class InvoiceController {
             ReceiptInfo receiptInfo = receiptInfoRepository.findByStoreId(order.storeId()).orElse(null);
             return ResponseEntity.ok(InvoiceHtmlRenderer.render(order, receiptInfo, ref, lang));
         } catch (OrderNotFoundException e) {
+            // A kiosk that was offline prints the QR before the order reaches the server: wait, do not fail.
+            if (orderId.matches("(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")) {
+                boolean ar = "ar".equalsIgnoreCase(lang);
+                return ResponseEntity.ok().header(HttpHeaders.CACHE_CONTROL, "no-store").body(waitingPage(ar));
+            }
             return ResponseEntity.status(404).body("<!DOCTYPE html><html><body><h1>Invoice not found</h1></body></html>");
         }
+    }
+
+    // Shown for an order the server does not have yet; refreshes itself until the order arrives.
+    static String waitingPage(boolean ar) {
+        return "<!DOCTYPE html><html lang=\"" + (ar ? "ar" : "en") + "\" dir=\"" + (ar ? "rtl" : "ltr") + "\"><head>"
+            + "<meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
+            + "<meta http-equiv=\"refresh\" content=\"10\"><title>Invoice</title></head>"
+            + "<body style=\"font-family:sans-serif;text-align:center;padding:3rem 1rem;color:#444\">"
+            + "<h2>" + (ar ? "جارٍ تجهيز فاتورتك" : "Your invoice is being prepared") + "</h2>"
+            + "<p>" + (ar ? "ستظهر الفاتورة هنا تلقائياً خلال لحظات. لا تغلق هذه الصفحة."
+                          : "It will appear here automatically in a moment. You can keep this page open.") + "</p>"
+            + "</body></html>";
     }
 
     // PDF invoice. ?lang=ar renders bilingual with Arabic font; default is English-only.

@@ -78,6 +78,12 @@ public class ConfigService {
             orgId);
     }
 
+    // A true/false property of the organization (falls back to the global value, then to the default).
+    public boolean boolProperty(long orgId, String key, boolean defaultValue) {
+        String v = findAllProperties(orgId).get(key);
+        return v == null ? defaultValue : "true".equalsIgnoreCase(v.trim());
+    }
+
     public void upsertOrgProperty(long orgId, String key, String value, String description) {
         jdbc.update(
             "INSERT INTO system_properties (organization_id, `key`, value, description) VALUES (?, ?, ?, ?) " +

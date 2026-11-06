@@ -89,7 +89,7 @@ public class DeviceStatusController {
 
         List<Map<String, Object>> rows = jdbc.query("""
             SELECT d.id, d.username, d.name, d.device_type, d.enabled, d.store_id, s.name AS store_name,
-                   d.last_seen_at,
+                   d.last_seen_at, d.device_no, d.last_pull_at, d.last_push_at, d.pending_orders, d.failed_orders,
                    (SELECT o.created_at FROM orders o WHERE o.username = d.username
                       AND o.organization_id = d.organization_id ORDER BY o.created_at DESC LIMIT 1) AS last_order_at,
                    (SELECT o.status FROM orders o WHERE o.username = d.username
@@ -114,6 +114,15 @@ public class DeviceStatusController {
                 m.put("storeName",   rs.getString("store_name"));
                 m.put("lastSeenAt",  seen != null ? seen.toString() : null);
                 m.put("appVersion",  version);
+                m.put("deviceNo",    rs.getInt("device_no"));
+                Timestamp pull = rs.getTimestamp("last_pull_at");
+                Timestamp push = rs.getTimestamp("last_push_at");
+                m.put("lastPullAt",  pull != null ? pull.toInstant().toString() : null);
+                m.put("lastPushAt",  push != null ? push.toInstant().toString() : null);
+                int pending = rs.getInt("pending_orders");
+                m.put("pendingOrders", rs.wasNull() ? null : pending);
+                int failed = rs.getInt("failed_orders");
+                m.put("failedOrders",  rs.wasNull() ? null : failed);
                 // online: true / false, or null when monitoring is off or the device was never seen
                 Boolean online = null;
                 Long offlineMinutes = null;

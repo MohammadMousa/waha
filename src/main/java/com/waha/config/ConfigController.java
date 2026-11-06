@@ -24,6 +24,8 @@ public class ConfigController {
     @GetMapping
     public ResponseEntity<?> get(@RequestParam(required = false) Long orgId) {
         Map<String, String> props = new java.util.LinkedHashMap<>(configService.findAllProperties(orgId != null ? orgId : 0L));
+        // Offline settings are always present: the stored value, or the default when none is set.
+        com.waha.sync.OfflineDefaults.VALUES.forEach(props::putIfAbsent);
         props.put("api_level", String.valueOf(ApiLevel.CURRENT));
         return ResponseEntity.ok(props);
     }

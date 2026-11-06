@@ -137,17 +137,17 @@ public class StoreRepository {
     }
 
     public record StoreAdminDetail(long id, String name, com.fasterxml.jackson.databind.JsonNode displayName,
-            String currency, Long imageResourceId, boolean active, boolean publicFlag) {}
+            String currency, Long imageResourceId, boolean active, boolean publicFlag, String shortCode) {}
 
     public Optional<StoreAdminDetail> findByIdAdmin(long storeId) {
         List<StoreAdminDetail> results = jdbcTemplate.query(
-            "SELECT id, name, display_name, currency, image_resource_id, active, `public` FROM stores WHERE id = ?",
+            "SELECT id, name, display_name, currency, image_resource_id, active, `public`, short_code FROM stores WHERE id = ?",
             (rs, i) -> {
                 com.fasterxml.jackson.databind.JsonNode dn = parseJsonOrNull(rs.getString("display_name"));
                 long imgId = rs.getLong("image_resource_id");
                 Long imageResourceId = rs.wasNull() ? null : imgId;
                 return new StoreAdminDetail(rs.getLong("id"), rs.getString("name"), dn,
-                    rs.getString("currency"), imageResourceId, rs.getBoolean("active"), rs.getBoolean("public"));
+                    rs.getString("currency"), imageResourceId, rs.getBoolean("active"), rs.getBoolean("public"), rs.getString("short_code"));
             },
             storeId
         );
@@ -205,6 +205,11 @@ public class StoreRepository {
         if (body.has("active")) {
             setClauses.add("active = ?");
             params.add(body.get("active").asBoolean());
+        }
+        if (body.has("shortCode")) {
+            setClauses.add("short_code = ?");
+            String code = body.get("shortCode").isNull() ? "" : body.get("shortCode").asText().trim();
+            params.add(code.isEmpty() ? null : code.toUpperCase());
         }
         if (body.has("public")) {
             setClauses.add("`public` = ?");

@@ -78,6 +78,6 @@ public class VatPricing {
         return new OrderResponse(o.orderId(), o.displayId(), o.storeId(), o.wasCreated(), o.status(), o.username(),
             o.subtotal(), o.tax(), o.total(), o.taxRate(), o.currency(), o.paymentReference(), o.paymentMethod(),
             o.invoiceUrl(), o.createdAt(), items, o.payments(), discountOf(items), o.invoiceOffer(),
-            couponWithVat(o.coupon(), o.taxRate()));
+            couponWithVat(o.coupon(), o.taxRate()), o.offlinePushed(), o.priceDiffers(), o.orderReference());
     }
 }

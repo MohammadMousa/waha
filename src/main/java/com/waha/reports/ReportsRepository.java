@@ -141,6 +141,9 @@ public class ReportsRepository {
             SELECT
               o.id,
               o.display_id,
+              o.order_reference,
+              o.offline_pushed,
+              o.price_differs,
               s.name                                          AS branch_name,
               s.display_name                                  AS branch_display_name,
               o.username                                      AS kiosk,
@@ -194,6 +197,7 @@ public class ReportsRepository {
         if (f.from()        != null) sb.append("\n  AND o.created_at >= :from");
         if (f.to()          != null) sb.append("\n  AND o.created_at <  :to");
         if (f.kiosk()       != null) sb.append("\n  AND o.username   = :kiosk");
+        if (f.reference()   != null) sb.append("\n  AND o.order_reference = :reference");
         if (f.paymentType() != null) sb.append("""
             \n  AND EXISTS (
               SELECT 1 FROM payments pm
@@ -215,7 +219,7 @@ public class ReportsRepository {
     }
 
     record OrderFilters(Long storeId, String status, String from, String to,
-                        String kiosk, String paymentType, Boolean synced) {
+                        String kiosk, String paymentType, Boolean synced, String reference) {
         MapSqlParameterSource params() {
             MapSqlParameterSource p = new MapSqlParameterSource();
             p.addValue("storeId",     storeId);
@@ -224,6 +228,7 @@ public class ReportsRepository {
             p.addValue("to",          to != null ? java.time.LocalDate.parse(to).plusDays(1).toString() : null);
             p.addValue("kiosk",       kiosk);
             p.addValue("paymentType", paymentType);
+            p.addValue("reference",   reference);
             return p;
         }
     }

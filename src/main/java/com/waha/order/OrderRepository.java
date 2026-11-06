@@ -76,7 +76,7 @@ public class OrderRepository {
 
         this.orderItemsInsert = new SimpleJdbcInsert(jdbcTemplate)
             .withTableName("order_items")
-            .usingColumns("order_id", "product_id", "quantity", "unit_price", "discount_amount", "tax_amount")
+            .usingColumns("order_id", "line_no", "product_id", "quantity", "unit_price", "discount_amount", "tax_amount")
             .usingGeneratedKeyColumns("id");
 
         this.paymentsInsert = new SimpleJdbcInsert(jdbcTemplate)
@@ -125,10 +125,12 @@ public class OrderRepository {
     // later edits never change history) and the order's total discount.
     public void insertOrderItems(String orderId, PricingEngine.Result priced, Map<Long, Product> productsById,
                                  com.waha.coupon.CouponService.Resolved coupon) {
+        int lineNo = 0;
         for (PricingEngine.PricedLine line : priced.lines()) {
             Product p = productsById.get(line.productId());
             Map<String, Object> row = new HashMap<>();
             row.put("order_id", orderId);
+            row.put("line_no", ++lineNo);
             row.put("product_id", p.id());
             row.put("quantity", line.quantity());
             row.put("unit_price", line.unitPrice());
@@ -274,7 +276,7 @@ public class OrderRepository {
         try {
             header = jdbcTemplate.queryForMap(
                 "SELECT o.display_id, o.store_id, o.status, o.subtotal_amount, o.tax_amount, o.total_amount, o.discount_amount, " +
-                "o.payment_reference, o.currency, o.tax_rate, o.username, o.created_at, " +
+                "o.payment_reference, o.currency, o.tax_rate, o.username, o.created_at, o.offline_pushed, o.price_differs, o.order_reference, " +
                 "(SELECT p.provider FROM payments p WHERE p.order_id = o.id AND p.outcome = 'PAID' ORDER BY p.created_at DESC LIMIT 1) AS payment_method " +
                 "FROM orders o WHERE o.id = ?",
                 orderId
@@ -341,8 +343,17 @@ public class OrderRepository {
             payments,
             (BigDecimal) header.get("discount_amount"),
             invoiceOffers.isEmpty() ? null : invoiceOffers.get(0),
-            couponUsed.isEmpty() ? null : couponUsed.get(0)
+            couponUsed.isEmpty() ? null : couponUsed.get(0),
+            flag(header.get("offline_pushed")),
+            flag(header.get("price_differs")),
+            (String) header.get("order_reference")
         );
+    }
+
+    // TINYINT(1) columns come back as Boolean from the driver, other widths as numbers.
+    private static boolean flag(Object v) {
+        if (v instanceof Boolean b) return b;
+        return v instanceof Number n && n.intValue() != 0;
     }
 
     // Order history for a logged-in user. Returns summary rows (no items)

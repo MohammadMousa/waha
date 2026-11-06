@@ -74,6 +74,12 @@ public class StoreAdminController {
             return ResponseEntity.status(404).body(new ErrorResponse("Store not found: " + id));
         }
 
+        if (body.has("shortCode") && !body.get("shortCode").isNull() && !body.get("shortCode").asText().trim().isEmpty()
+                && !body.get("shortCode").asText().trim().matches("[A-Za-z0-9]{1,10}")) {
+            return ResponseEntity.badRequest().body(Map.of("message", "shortCode may have up to 10 letters or digits",
+                "errors", Map.of("shortCode", "Up to 10 letters or digits")));
+        }
+
         storeRepository.patch(id, body);
         return ResponseEntity.ok().build();
     }

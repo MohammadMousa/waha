@@ -64,6 +64,8 @@ final class InvoiceHtmlRenderer {
             + ".hdr-meta{flex:1.2}"
             + ".hdr-qr{flex:0 0 auto}"
             + ".inv-title{font-size:1.5em;font-weight:800;margin:0 0 .15rem;line-height:1.2}"
+            + ".inv-ref{font-size:1.7em;font-weight:800;margin:.1rem 0 .2rem;line-height:1.2;direction:ltr;unicode-bidi:isolate}"
+            + ".inv-ref small{font-size:.5em;font-weight:600;color:#888;margin-inline-end:.4rem}"
             + ".inv-uuid{font-size:.72em;color:#aaa;margin:.1rem 0 .7rem;word-break:break-all}"
             + ".company-name{font-weight:700;font-size:.97em;margin:.6rem 0 .1rem}"
             + ".company-detail{font-size:.82em;color:#555;margin:.1rem 0}"
@@ -104,6 +106,9 @@ final class InvoiceHtmlRenderer {
         // DOM position: first in flex → LEFT in LTR, RIGHT in RTL
         StringBuilder companyBlock = new StringBuilder("<div class=\"hdr-company\">");
         companyBlock.append("<div class=\"inv-title\">").append(esc(invTitle)).append("</div>");
+        if (order.orderReference() != null)
+            companyBlock.append("<div class=\"inv-ref\"><small>").append(ar ? "الطلب" : "Order").append("</small>")
+                        .append(esc(order.orderReference())).append("</div>");
         companyBlock.append("<div class=\"inv-uuid\">").append(esc(order.orderId())).append("</div>");
         if (storeName != null)
             companyBlock.append("<div class=\"company-name\">").append(esc(storeName)).append("</div>");
@@ -125,6 +130,9 @@ final class InvoiceHtmlRenderer {
         if (order.displayId() != null)
             metaBlock.append("<tr><td class=\"ml\">").append(ar ? "الرقم المختصر" : "Short ID")
                      .append("</td><td class=\"mv\">#").append(order.displayId()).append("</td></tr>");
+        if (order.orderReference() != null)
+            metaBlock.append("<tr><td class=\"ml\">").append(ar ? "المرجع" : "Reference")
+                     .append("</td><td class=\"mv\">").append(esc(order.orderReference())).append("</td></tr>");
         if (info != null && info.vatNumber() != null)
             metaBlock.append("<tr><td class=\"ml\">").append(ar ? "الرقم الضريبي" : "VAT number")
                      .append("</td><td class=\"mv\">").append(esc(info.vatNumber())).append("</td></tr>");

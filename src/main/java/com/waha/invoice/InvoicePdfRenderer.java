@@ -130,6 +130,8 @@ final class InvoicePdfRenderer {
             // Company + title cell — uses mixed Chunk for Arabic label + Latin identifiers
             PdfPCell companyCell = cellNoBorder(cAlign);
             companyCell.addElement(para(t(invTitle, ar), fTitle, cAlign));
+            if (order.orderReference() != null)
+                companyCell.addElement(para(order.orderReference(), new Font(bfLatBold, 14, Font.NORMAL, C_DARK), cAlign));
             companyCell.addElement(para(order.orderId(), fSmallLat, cAlign));
             companyCell.addElement(new Phrase("\n", fSmall));
             if (storeName != null) {
@@ -163,6 +165,8 @@ final class InvoicePdfRenderer {
                 addMetaRow(metaTbl, ar ? "التاريخ" : "Date",         dateStr,                          ar, fLabel, fSmallLat);
             if (order.displayId() != null)
                 addMetaRow(metaTbl, ar ? "الرقم المختصر" : "Short ID", "#" + order.displayId(),        ar, fLabel, fSmallLat);
+            if (order.orderReference() != null)
+                addMetaRow(metaTbl, ar ? "المرجع" : "Reference", order.orderReference(),                ar, fLabel, fSmallLat);
             if (info != null && info.vatNumber() != null)
                 addMetaRow(metaTbl, ar ? "الرقم الضريبي" : "VAT number", info.vatNumber(),             ar, fLabel, fSmallLat);
             if (order.currency() != null)

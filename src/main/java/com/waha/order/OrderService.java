@@ -109,12 +109,13 @@ public class OrderService {
         Map<Long, Product> productsById = productRepository.findByIds(productIds).stream()
             .collect(Collectors.toMap(Product::id, p -> p));
 
+        boolean sellDisabled = configService.boolProperty(storeRepository.findCompanyId(storeId), "scan_disabled_products", false);
         List<PricingEngine.Line> lines = items.stream().map(i -> {
             Product p = productsById.get(i.productId());
             if (p == null) {
                 throw new ProductNotSellableException("Product " + i.productId() + " does not exist");
             }
-            if (!p.active()) {
+            if (!p.active() && !sellDisabled) {
                 throw new ProductNotSellableException("Product " + p.name() + " is not currently sellable");
             }
             return new PricingEngine.Line(p.id(), i.quantity(), p.price());

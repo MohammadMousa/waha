@@ -46,6 +46,29 @@ public class OrgPropertiesController {
             new PropertySpec("boolean", "Show prices without VAT in the apps; by default prices are shown with VAT (default false)", "true or false"));
         KNOWN_KEYS.put("terminal_timeout_seconds",
             new PropertySpec("integer", "Seconds the kiosk waits for the card terminal; overrides the device setting (default 60)", "10–80 seconds"));
+        // Offline mode (see docs/offline.md). Defaults live in OfflineDefaults and are always sent by GET /api/config.
+        KNOWN_KEYS.put("offline_mode",
+            new PropertySpec("boolean", "Kiosks keep selling from a local copy of the catalog and send orders later (default false)", "true or false"));
+        KNOWN_KEYS.put("sync_pull_start_delay_seconds",
+            new PropertySpec("integer", "Seconds the kiosk waits after starting before its first catalog pull (default 60)", "0–3600 seconds"));
+        KNOWN_KEYS.put("sync_pull_interval_minutes",
+            new PropertySpec("integer", "Minutes between catalog pulls (default 10)", "1–1440 minutes"));
+        KNOWN_KEYS.put("sync_pull_patch_size",
+            new PropertySpec("integer", "Rows per catalog pull page (default 200)", "10–500 rows"));
+        KNOWN_KEYS.put("sync_pull_timeout_seconds",
+            new PropertySpec("integer", "Seconds the kiosk waits for one pull page (default 30)", "5–120 seconds"));
+        KNOWN_KEYS.put("sync_idle_seconds",
+            new PropertySpec("integer", "Seconds without scans or touches before the kiosk starts a pull (default 10)", "1–300 seconds"));
+        KNOWN_KEYS.put("sync_push_interval_seconds",
+            new PropertySpec("integer", "Seconds between attempts to send waiting orders (default 60)", "10–3600 seconds"));
+        KNOWN_KEYS.put("sync_push_timeout_seconds",
+            new PropertySpec("integer", "Seconds the kiosk waits for the server to accept an order (default 60)", "10–300 seconds"));
+        KNOWN_KEYS.put("sync_push_retry_max_delay_minutes",
+            new PropertySpec("integer", "Longest wait between retries of a failed order send (default 15)", "1–240 minutes"));
+        KNOWN_KEYS.put("scan_disabled_products",
+            new PropertySpec("boolean", "A disabled product can still be scanned and sold, online and offline (default false)", "true or false"));
+        KNOWN_KEYS.put("push_paid_orders_only",
+            new PropertySpec("boolean", "Kiosks send only paid orders; unpaid ones stay on the device (default true)", "true or false"));
     }
 
     record PropertySpec(String type, String description, String constraints) {}
@@ -88,6 +111,7 @@ public class OrgPropertiesController {
                 m.put("type",        entry.getValue().type());
                 m.put("description", entry.getValue().description());
                 m.put("constraints", entry.getValue().constraints());
+                m.put("default",     com.waha.sync.OfflineDefaults.VALUES.get(entry.getKey()));
                 result.add(m);
             }
             return ResponseEntity.ok(Map.of("knownKeys", result));
@@ -173,7 +197,16 @@ public class OrgPropertiesController {
                 yield (v.equals("true") || v.equals("false")) ? null
                     : "auto_log_upload_enabled must be 'true' or 'false'";
             }
-            case "enable_logging", "device_auto_restart_enabled", "prices_exclude_vat" -> {
+            case "sync_pull_start_delay_seconds"     -> intInRange(key, value, 0, 3600);
+            case "sync_pull_interval_minutes"        -> intInRange(key, value, 1, 1440);
+            case "sync_pull_patch_size"              -> intInRange(key, value, 10, 500);
+            case "sync_pull_timeout_seconds"         -> intInRange(key, value, 5, 120);
+            case "sync_idle_seconds"                 -> intInRange(key, value, 1, 300);
+            case "sync_push_interval_seconds"        -> intInRange(key, value, 10, 3600);
+            case "sync_push_timeout_seconds"         -> intInRange(key, value, 10, 300);
+            case "sync_push_retry_max_delay_minutes" -> intInRange(key, value, 1, 240);
+            case "enable_logging", "device_auto_restart_enabled", "prices_exclude_vat",
+                 "offline_mode", "push_paid_orders_only", "scan_disabled_products" -> {
                 String v = value.trim().toLowerCase();
                 yield (v.equals("true") || v.equals("false")) ? null
                     : key + " must be 'true' or 'false'";

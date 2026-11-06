@@ -26,5 +26,8 @@ public record OrderResponse(
     List<PaymentRecord> payments,  // all payment attempts, newest first
     BigDecimal discountAmount,     // total discount of the order (0 when no offer applied)
     AppliedOfferView invoiceOffer, // invoice-level offer (null when none)
-    CouponView coupon              // coupon used (null when none); its discount is part of discountAmount
+    CouponView coupon,             // coupon used (null when none); its discount is part of discountAmount
+    boolean offlinePushed,         // created and paid on a kiosk without the server, sent later
+    boolean priceDiffers,          // an offline order whose prices or tax rate differed from the server's at push time
+    String orderReference          // short code the customer can quote (kiosk-made for offline orders; null for older orders)
 ) {}

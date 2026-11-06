@@ -83,6 +83,7 @@ public class ReportsController {
             @RequestParam(required = false) String  kiosk,
             @RequestParam(required = false) String  paymentType,
             @RequestParam(required = false) Boolean synced,
+            @RequestParam(required = false) String  reference,
             @RequestParam(defaultValue = "0")  int page,
             @RequestParam(defaultValue = "10") int size) {
 
@@ -98,7 +99,8 @@ public class ReportsController {
         }
 
         ReportsRepository.OrderFilters f = new ReportsRepository.OrderFilters(
-            storeId, status, from, to, kiosk, paymentType, synced);
+            storeId, status, from, to, kiosk, paymentType, synced,
+            reference == null || reference.isBlank() ? null : reference.trim());
 
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("summary",    reportsRepository.getOrdersSummary(f));

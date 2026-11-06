@@ -35,16 +35,19 @@ public class ProductController {
     private final ResourceRepository resourceRepository;
     private final VatPricing vatPricing;
     private final MissingProductTracker missTracker;
+    private final com.waha.config.ConfigService configService;
 
     public ProductController(ProductRepository productRepository, StoreRepository storeRepository,
                               SessionService sessionService, ResourceRepository resourceRepository,
-                              VatPricing vatPricing, MissingProductTracker missTracker) {
+                              VatPricing vatPricing, MissingProductTracker missTracker,
+                              com.waha.config.ConfigService configService) {
         this.productRepository = productRepository;
         this.storeRepository = storeRepository;
         this.sessionService = sessionService;
         this.resourceRepository = resourceRepository;
         this.vatPricing = vatPricing;
         this.missTracker = missTracker;
+        this.configService = configService;
     }
 
     // Discovery/browsing. storeId is optional - an explicit value still
@@ -126,7 +129,7 @@ public class ProductController {
             missTracker.record(resolvedStoreId, barcode, () -> sessionService.resolveUsername(null, authHeader));
             return ResponseEntity.status(404).body(new ErrorResponse("No product found for barcode " + barcode));
         }
-        if (!product.get().active()) {
+        if (!product.get().active() && !configService.boolProperty(companyId, "scan_disabled_products", false)) {
             return ResponseEntity.status(409).body(new ErrorResponse("Product is not currently sellable"));
         }
         return ResponseEntity.ok(views(List.of(product.get()), resolvedStoreId, companyId).get(0));

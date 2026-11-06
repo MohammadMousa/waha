@@ -68,6 +68,17 @@ public class DeviceAdminController {
         if (deviceRepository.existsByUsername(username, orgId))
             return ResponseEntity.status(409).body(new ErrorResponse("Username already taken"));
 
+        // Device number: the one sent, or the lowest free number of the store.
+        int deviceNo;
+        if (body.has("deviceNo") && !body.get("deviceNo").isNull()) {
+            deviceNo = body.get("deviceNo").asInt(0);
+            if (deviceNo < 1 || deviceNo > 99) return deviceNoError("deviceNo must be between 1 and 99");
+            if (deviceRepository.deviceNoTaken(storeId, deviceNo, 0)) return deviceNoError("This device number is already used in the store");
+        } else {
+            deviceNo = deviceRepository.nextFreeDeviceNo(storeId);
+            if (deviceNo < 0) return deviceNoError("All device numbers (1 to 99) of this store are in use");
+        }
+
         String deviceKey = UUID.randomUUID().toString().replace("-", "").substring(0, 16).toUpperCase();
         String name       = text(body, "name") != null ? text(body, "name") : username;
         String deviceType = text(body, "deviceType") != null ? text(body, "deviceType") : "KIOSK";
@@ -75,7 +86,7 @@ public class DeviceAdminController {
 
         long deviceId;
         try {
-            deviceId = deviceRepository.create(orgId, storeId, deviceKey, name, deviceType, username, encoder.encode(pinCode), enabled);
+            deviceId = deviceRepository.create(orgId, storeId, deviceKey, name, deviceType, username, encoder.encode(pinCode), enabled, deviceNo);
         } catch (DataIntegrityViolationException e) {
             return ResponseEntity.status(409).body(new ErrorResponse("Username already taken"));
         }
@@ -110,6 +121,22 @@ public class DeviceAdminController {
         if (!deviceRepository.existsById(id))
             return ResponseEntity.status(404).body(new ErrorResponse("Device not found: " + id));
 
+        // Device number: validated before anything changes. Moving a device to another store keeps its
+        // number when it is free there, otherwise it gets the lowest free number of the new store.
+        var current = deviceRepository.findSyncInfo(id).orElseThrow();
+        long targetStore = body.has("storeId") ? body.get("storeId").asLong() : current.storeId();
+        Integer newDeviceNo = null;
+        if (body.has("deviceNo") && !body.get("deviceNo").isNull()) {
+            int n = body.get("deviceNo").asInt(0);
+            if (n < 1 || n > 99) return deviceNoError("deviceNo must be between 1 and 99");
+            if (deviceRepository.deviceNoTaken(targetStore, n, id)) return deviceNoError("This device number is already used in the store");
+            newDeviceNo = n;
+        } else if (targetStore != current.storeId() && deviceRepository.deviceNoTaken(targetStore, current.deviceNo(), id)) {
+            int n = deviceRepository.nextFreeDeviceNo(targetStore);
+            if (n < 0) return deviceNoError("All device numbers (1 to 99) of the target store are in use");
+            newDeviceNo = n;
+        }
+
         JsonNode patchBody = body;
         if (body.has("pinCode")) {
             String pin = body.get("pinCode").asText("").trim();
@@ -125,6 +152,11 @@ public class DeviceAdminController {
         if (body.has("enabled") && body.get("enabled").asBoolean())
             lockoutService.clearDeviceLockout(id);
 
+        if (newDeviceNo != null) {
+            ObjectNode withNo = patchBody.deepCopy();
+            withNo.put("deviceNo", newDeviceNo);
+            patchBody = withNo;
+        }
         deviceRepository.patch(id, patchBody);
         if (body.has("pinCode") || (body.has("enabled") && !body.get("enabled").asBoolean())) {
             sessionService.endDeviceSessions(id);
@@ -181,7 +213,17 @@ public class DeviceAdminController {
         m.put("enabled",        d.enabled());
         m.put("createdAt",      d.createdAt() != null ? d.createdAt().toString() : null);
         m.put("lockedUntil",    d.lockedUntil() != null ? d.lockedUntil().toString() : null);
+        m.put("deviceNo",       d.deviceNo());
+        m.put("lastPullAt",     d.lastPullAt() != null ? d.lastPullAt().toString() : null);
+        m.put("lastPushAt",     d.lastPushAt() != null ? d.lastPushAt().toString() : null);
+        m.put("pendingOrders",  d.pendingOrders());
+        m.put("failedOrders",   d.failedOrders());
         return m;
+    }
+
+    // Field error in the same shape the coupon calls use: {message, errors{field}}.
+    private static ResponseEntity<?> deviceNoError(String message) {
+        return ResponseEntity.badRequest().body(Map.of("message", message, "errors", Map.of("deviceNo", message)));
     }
 
     private static boolean isWeakPin(String pin) {
