@@ -378,6 +378,8 @@ public class OdooCatalogService {
     }
 
     // A null categoryId (Odoo category not known to Waha) keeps the product's current category.
+    // updated_at is deliberately not set here: the column refreshes itself only when a value really
+    // changes, so devices pulling "changed since" do not re-download the catalog after an unchanged import.
     private void updateProduct(long id, String nameJson, BigDecimal price, Long categoryId, boolean active) {
         Map<String, Object> params = new HashMap<>();
         params.put("id", id);
@@ -387,7 +389,7 @@ public class OdooCatalogService {
         params.put("active", active);
         jdbc.update(
             "UPDATE products SET name = :name, price = :price, category_id = COALESCE(:categoryId, category_id), " +
-            "active = :active, updated_at = NOW() WHERE id = :id",
+            "active = :active WHERE id = :id",
             params
         );
     }
