@@ -48,7 +48,7 @@ public class OrgPropertiesController {
             new PropertySpec("integer", "Seconds the kiosk waits for the card terminal; overrides the device setting (default 60)", "10–80 seconds"));
         // Offline mode (see docs/offline.md). Defaults live in OfflineDefaults and are always sent by GET /api/config.
         KNOWN_KEYS.put("offline_mode",
-            new PropertySpec("boolean", "Kiosks keep selling from a local copy of the catalog and send orders later (default false)", "true or false"));
+            new PropertySpec("string", "How kiosks work without the server: off (online only), caching (online first, remembers what it reads and keeps selling from it when the server is unreachable) or full (keeps a full local copy and syncs on a schedule). Default off", "off, caching or full"));
         KNOWN_KEYS.put("sync_pull_start_delay_seconds",
             new PropertySpec("integer", "Seconds the kiosk waits after starting before its first catalog pull (default 60)", "0–3600 seconds"));
         KNOWN_KEYS.put("sync_stagger_seconds",
@@ -214,9 +214,14 @@ public class OrgPropertiesController {
             case "sync_push_interval_minutes"        -> intInRange(key, value, 1, 60);
             case "sync_push_timeout_seconds"         -> intInRange(key, value, 10, 300);
             case "sync_push_retry_max_delay_minutes" -> intInRange(key, value, 1, 240);
+            case "offline_mode" -> {
+                String v = value.trim();
+                yield (v.equals("off") || v.equals("caching") || v.equals("full")) ? null
+                    : key + " must be 'off', 'caching' or 'full'";
+            }
             case "offline_unpaid_cleanup_days_offset" -> intInRange(key, value, 1, 365);
             case "enable_logging", "device_auto_restart_enabled", "prices_exclude_vat",
-                 "offline_mode", "push_paid_orders_only", "scan_disabled_products",
+                 "push_paid_orders_only", "scan_disabled_products",
                  "offline_unpaid_cleanup_enabled", "offline_audit_cleanup" -> {
                 String v = value.trim().toLowerCase();
                 yield (v.equals("true") || v.equals("false")) ? null

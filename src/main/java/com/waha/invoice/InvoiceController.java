@@ -43,6 +43,8 @@ public class InvoiceController {
     public ResponseEntity<String> view(@PathVariable String orderId,
                                         @RequestParam(required = false) String ref,
                                         @RequestParam(defaultValue = "en") String lang,
+                                        @RequestParam(required = false) String offline,
+                                        @RequestParam(required = false) Long since,
                                         @RequestParam(required = false) String paymentId,
                                         @RequestParam(name = "Id", required = false) String myfatoorahId,
                                         @RequestParam(name = "session_id", required = false) String stripeSessionId) {
@@ -57,22 +59,37 @@ public class InvoiceController {
             ReceiptInfo receiptInfo = receiptInfoRepository.findByStoreId(order.storeId()).orElse(null);
             return ResponseEntity.ok(InvoiceHtmlRenderer.render(order, receiptInfo, ref, lang));
         } catch (OrderNotFoundException e) {
-            // A kiosk that was offline prints the QR before the order reaches the server: wait, do not fail.
-            if (orderId.matches("(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")) {
+            // A kiosk that made the order offline marks its QR link with offline=1: wait for the push, do not fail.
+            // Without the marker an unknown order is a plain 404.
+            if ("1".equals(offline)
+                && orderId.matches("(?i)^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")) {
                 boolean ar = "ar".equalsIgnoreCase(lang);
-                return ResponseEntity.ok().header(HttpHeaders.CACHE_CONTROL, "no-store").body(waitingPage(ar));
+                return ResponseEntity.ok().header(HttpHeaders.CACHE_CONTROL, "no-store")
+                    .body(waitingPage(ar, since, java.time.Instant.now().getEpochSecond()));
             }
             return ResponseEntity.status(404).body("<!DOCTYPE html><html><body><h1>Invoice not found</h1></body></html>");
         }
     }
 
-    // Shown for an order the server does not have yet; refreshes itself until the order arrives.
-    static String waitingPage(boolean ar) {
-        return "<!DOCTYPE html><html lang=\"" + (ar ? "ar" : "en") + "\" dir=\"" + (ar ? "rtl" : "ltr") + "\"><head>"
+    static final long WAIT_LIMIT_SECONDS = 30 * 60;
+
+    // Shown for an offline order the server does not have yet. It reloads itself every 10 seconds (keeping the
+    // marker and the time it started waiting) and gives up after 30 minutes.
+    static String waitingPage(boolean ar, Long since, long now) {
+        long start = since == null || since > now ? now : since;
+        boolean expired = now - start > WAIT_LIMIT_SECONDS;
+        String head = "<!DOCTYPE html><html lang=\"" + (ar ? "ar" : "en") + "\" dir=\"" + (ar ? "rtl" : "ltr") + "\"><head>"
             + "<meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">"
-            + "<meta http-equiv=\"refresh\" content=\"10\"><title>Invoice</title></head>"
-            + "<body style=\"font-family:sans-serif;text-align:center;padding:3rem 1rem;color:#444\">"
-            + "<h2>" + (ar ? "جارٍ تجهيز فاتورتك" : "Your invoice is being prepared") + "</h2>"
+            + (expired ? "" : "<meta http-equiv=\"refresh\" content=\"10;url=?offline=1&amp;lang=" + (ar ? "ar" : "en")
+                + "&amp;since=" + start + "\">")
+            + "<title>Invoice</title></head>"
+            + "<body style=\"font-family:sans-serif;text-align:center;padding:3rem 1rem;color:#444\">";
+        if (expired) {
+            return head + "<h2>" + (ar ? "تعذّر العثور على الفاتورة" : "We couldn't find this invoice") + "</h2>"
+                + "<p>" + (ar ? "إذا دفعت للتو، جرّب مرة أخرى لاحقاً أو اسأل المتجر."
+                              : "If you just paid, try again later or ask the store.") + "</p></body></html>";
+        }
+        return head + "<h2>" + (ar ? "جارٍ تجهيز فاتورتك" : "Your invoice is being prepared") + "</h2>"
             + "<p>" + (ar ? "ستظهر الفاتورة هنا تلقائياً خلال لحظات. لا تغلق هذه الصفحة."
                           : "It will appear here automatically in a moment. You can keep this page open.") + "</p>"
             + "</body></html>";

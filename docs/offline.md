@@ -10,7 +10,7 @@ properties calls (`GET /api/admin/organization/properties/keys` lists them with 
 
 | Property | Default |
 |---|---|
-| offline_mode | false |
+| offline_mode | off |
 | sync_pull_start_delay_seconds | 60 |
 | sync_stagger_seconds | 180 |
 | sync_pull_interval_minutes | 60 |
@@ -25,6 +25,18 @@ properties calls (`GET /api/admin/organization/properties/keys` lists them with 
 | offline_unpaid_cleanup_enabled | false |
 | offline_unpaid_cleanup_days_offset | 15 |
 | offline_audit_cleanup | false |
+
+`offline_mode` (one of `off`, `caching`, `full`; anything else is rejected with 400):
+
+| Value | Behaviour |
+|---|---|
+| `off` | Online only, as before. Nothing is kept for offline use. |
+| `caching` | Works like online: reads go to the server first. Every successful read is saved in the local tables (the same tables the feeds fill), and when the server cannot be reached (no connection, timeout, 5xx) the kiosk reads from them. No scheduled pull, no bootstrap. Orders: see section 6c. |
+| `full` | Phase 1 offline: full local copy kept up to date by the scheduled pull, local-first sales. |
+
+Rules: fall back only when the server is unreachable. Any 4xx (including 404) is an answer from the server and is never a reason to use
+the cache. Do not cache error responses. The push scheduler (section 7) runs in `caching` and `full`; changing the mode never wipes the
+local database or loses waiting orders. Switching `caching` to `full` starts the pull and fills what is missing.
 
 Local cleanup (kiosk side, read from `GET /api/config`):
 - `offline_unpaid_cleanup_enabled` (true/false): the kiosk deletes local orders that are still unpaid (never sent) and older than
@@ -119,9 +131,14 @@ and `store-payment-methods` has no row for it or that row is active. Order by th
 global `sortOrder`. A PAYMENT_URL method also needs a non-empty `paymentUrl`. While offline, offer only methods with `offlineCapable` true.
 
 ## 5c. Invoice QR for orders not pushed yet
-The QR is the same online and offline (the existing invoice URL for the order UUID). When the server has no order with a valid
-UUID yet, `GET /api/invoices/{uuid}` returns 200 with a "your invoice is being prepared" page (English or Arabic with `?lang=ar`) that
-refreshes itself every 10 seconds and shows the invoice once the order arrives. A badly formed id is still 404.
+The kiosk builds the link itself: `<invoiceBaseUrl>/api/invoices/<orderUUID>?offline=1`. The `offline=1` marker is added only for
+orders made offline (online orders keep the plain link). `GET /api/invoices/{uuid}` then behaves like this:
+- The server has the order: the normal invoice, the marker is ignored.
+- The server does not have it and the link has `offline=1`: 200 with a "your invoice is being prepared" page (English, or Arabic with
+  `?lang=ar`) that reloads every 10 seconds, keeping the marker, until the order arrives. After 30 minutes of waiting the page stops
+  reloading and says it could not find the invoice and to try again later or ask the store.
+- The server does not have it and there is no marker, or the id is not a UUID: a normal 404 at once.
+The marker cannot prove an order exists (anyone can type it), which is why the waiting page gives up after 30 minutes.
 The JSON order call (`GET /api/orders/{id}`) keeps returning 404 for an unknown order; a web app that uses it must treat a 404
 for a well-formed UUID as "waiting" and poll.
 
@@ -171,6 +188,28 @@ Errors: `{ "error": "CODE", "message": "...", "retryable": true|false }`
   409: `ITEMS_CONFLICT` (order exists with other lines or totals), `PAYMENT_CONFLICT` (same paymentId with other details),
   `ORDER_CANCELLED_ON_SERVER`.
 - `401`/`403`: stop pushing, keep orders, show a warning. Do not mark orders failed.
+
+## 6b. Payment-only push: `POST /api/sync/orders/{orderId}/payments`
+For an order the server already holds (for example created online) whose payment the kiosk could not report. Device session required.
+Body: `{ "totalAmount": 10.35, "payments": [ { paymentId, provider, outcome: "PAID", providerReference, createdAt, authCode, notes, lateApproval } ] }`
+(`totalAmount` optional; the payment fields are the same as in section 6). The lines are not compared.
+The server records the payments, marks the order PAID (once: stock is deducted and Odoo is notified once), and answers like section 6:
+`{ result: UPDATED | ALREADY_SYNCED, orderId, displayId, orderReference }`. Repeating it is safe. A `totalAmount` that differs from the
+server's total only flags the order (`priceDiffers`); the money was already taken.
+Errors: 404 `ORDER_NOT_FOUND` (the server does not have the order: send the whole order with section 6 instead), 409 `STORE_MISMATCH`,
+`ORDER_CANCELLED_ON_SERVER`, `PAYMENT_CONFLICT`, 422 `INVALID_REQUEST`, `PAYMENT_MISSING`. Same retry rules as section 6.
+Kiosk state: keep a synced flag on the order and on each payment. Order not synced: full push (section 6, includes its payments).
+Order synced and payment not: payment-only push. Both synced: nothing.
+
+## 6c. Orders in `caching` mode: server first, local fallback
+1. The kiosk makes the order UUID first, as today.
+2. It calls the normal online order create (offers and coupons work, the server numbers the order).
+3. On no connection, timeout or 5xx it saves the order locally with the same UUID and the same reference rules as `full`, and pushes it
+   with section 6 (the push is safe to repeat, so a create that actually reached the server causes no duplicate).
+   On a 4xx it shows the error and does not fall back.
+4. Payment: the terminal works over USB without the server. For a server-created order the kiosk uses the normal pay call; when that
+   call cannot reach the server it keeps the approved payment locally and sends it with section 6b. Never lose an approved payment.
+5. The QR of a locally saved order carries `?offline=1` (section 5c). Orders created on the server use the normal link.
 
 ## 7. Push rules (kiosk)
 - A paid order is saved in SQLite first, then pushed at once. On failure it stays PENDING.

@@ -56,4 +56,16 @@ class OfflineOrderServiceTest {
         assertEquals(422, e.status());
         assertEquals(409, OfflineOrderException.conflict("PAYMENT_CONFLICT", "x").status());
     }
+
+    @Test
+    void paymentsAreCheckedTheSameForBothPushes() {
+        var ok = new OfflineOrderRequest.Payment("0192a3c4-1111-7222-8333-444455556666", "GEIDEA", "PAID", "RRN1", null, "A1", null, null);
+        assertDoesNotThrow(() -> OfflineOrderService.validatePayments(List.of(ok)));
+        assertDoesNotThrow(() -> OfflineOrderService.validatePayments(List.of(ok, new OfflineOrderRequest.Payment(
+            "0192a3c4-1111-7222-8333-444455556667", "GEIDEA", "PAID", "RRN2", null, null, null, null))));
+        var twice = assertThrows(OfflineOrderException.class, () -> OfflineOrderService.validatePayments(List.of(ok, ok)));
+        assertEquals("INVALID_REQUEST", twice.code());
+        var declined = new OfflineOrderRequest.Payment("0192a3c4-1111-7222-8333-444455556668", "GEIDEA", "FAILED", null, null, null, null, null);
+        assertThrows(OfflineOrderException.class, () -> OfflineOrderService.validatePayments(List.of(declined)));
+    }
 }

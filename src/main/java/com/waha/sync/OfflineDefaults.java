@@ -11,7 +11,7 @@ public final class OfflineDefaults {
     public static final Map<String, String> VALUES;
     static {
         Map<String, String> m = new LinkedHashMap<>();
-        m.put("offline_mode", "false");
+        m.put("offline_mode", "off");
         m.put("sync_pull_start_delay_seconds", "60");
         m.put("sync_stagger_seconds", "180");
         m.put("sync_pull_interval_minutes", "60");

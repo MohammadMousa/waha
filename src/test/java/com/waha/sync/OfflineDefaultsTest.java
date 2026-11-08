@@ -15,7 +15,7 @@ class OfflineDefaultsTest {
         assertEquals("false", OfflineDefaults.VALUES.get("offline_unpaid_cleanup_enabled"));
         assertEquals("15", OfflineDefaults.VALUES.get("offline_unpaid_cleanup_days_offset"));
         assertEquals("false", OfflineDefaults.VALUES.get("offline_audit_cleanup"));
-        assertEquals("false", OfflineDefaults.VALUES.get("offline_mode"));
+        assertEquals("off", OfflineDefaults.VALUES.get("offline_mode"));
         assertEquals("true", OfflineDefaults.VALUES.get("push_paid_orders_only"));
         assertEquals("60", OfflineDefaults.VALUES.get("sync_pull_interval_minutes"));
         assertEquals("3", OfflineDefaults.VALUES.get("sync_push_interval_minutes"));

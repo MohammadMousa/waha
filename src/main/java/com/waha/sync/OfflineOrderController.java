@@ -33,13 +33,25 @@ public class OfflineOrderController {
     @PostMapping("/orders")
     public ResponseEntity<?> push(@RequestHeader(value = "Authorization", required = false) String authHeader,
                                   @RequestBody OfflineOrderRequest body) {
+        return handle(authHeader, (device) -> service.push(body, device));
+    }
+
+    // Records approved payments for an order the server already holds (docs/offline.md section 6b).
+    @PostMapping("/orders/{orderId}/payments")
+    public ResponseEntity<?> pushPayments(@RequestHeader(value = "Authorization", required = false) String authHeader,
+                                          @PathVariable String orderId, @RequestBody PaymentsOnlyRequest body) {
+        return handle(authHeader, (device) -> service.pushPayments(orderId, body, device));
+    }
+
+    private ResponseEntity<?> handle(String authHeader,
+                                     java.util.function.Function<com.waha.device.DeviceRepository.SyncInfo, OfflineOrderService.Result> call) {
         UserSession session = sessionService.requireSession(authHeader);
         if (session.deviceId() == null) throw new ForbiddenException("A device session is required");
         var device = deviceRepository.findSyncInfo(session.deviceId());
         if (device.isEmpty()) return ResponseEntity.status(404).body(new ErrorResponse("Device not found"));
 
         try {
-            var result = service.push(body, device.get());
+            var result = call.apply(device.get());
             deviceRepository.updateSyncStatus(session.deviceId(), null, Instant.now(), null, null);
             Map<String, Object> out = new LinkedHashMap<>();
             out.put("result", result.result());

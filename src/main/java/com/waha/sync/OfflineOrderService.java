@@ -84,6 +84,60 @@ public class OfflineOrderService {
         return new Result(out.result(), r.orderId(), out.displayId(), out.reference());
     }
 
+    // Payment-only push: the server already holds the order (for example created online) and the kiosk only
+    // has to record the approved payment. The lines are not compared. Repeating it is safe.
+    public Result pushPayments(String orderId, PaymentsOnlyRequest r, DeviceRepository.SyncInfo device) {
+        if (orderId == null || !UUID_FORMAT.matcher(orderId).matches())
+            throw OfflineOrderException.invalid("INVALID_REQUEST", "orderId must be a UUID");
+        if (r == null || r.payments() == null || r.payments().isEmpty())
+            throw OfflineOrderException.invalid("PAYMENT_MISSING", "At least one payment is needed");
+        validatePayments(r.payments());
+        Outcome out = tx.execute(s -> savePayments(orderId, r, device));
+        if (out.becamePaid()) {
+            String currency = jdbc.queryForObject("SELECT currency FROM orders WHERE id = ?", String.class, orderId);
+            events.publishEvent(new OrderPaidEvent(orderId, device.storeId(), currency));
+        }
+        return new Result(out.result(), orderId, out.displayId(), out.reference());
+    }
+
+    private Outcome savePayments(String orderId, PaymentsOnlyRequest r, DeviceRepository.SyncInfo device) {
+        List<Map<String, Object>> found = jdbc.queryForList(
+            "SELECT store_id, display_id, status, version, total_amount, order_reference FROM orders WHERE id = ? FOR UPDATE", orderId);
+        if (found.isEmpty())
+            throw new OfflineOrderException("ORDER_NOT_FOUND", "The server does not have this order yet; send the whole order", 404);
+        Map<String, Object> o = found.get(0);
+        if (((Number) o.get("store_id")).longValue() != device.storeId())
+            throw OfflineOrderException.conflict("STORE_MISMATCH", "This order belongs to another store");
+        String status = (String) o.get("status");
+        if ("CANCELLED".equals(status))
+            throw OfflineOrderException.conflict("ORDER_CANCELLED_ON_SERVER", "The server holds this order as cancelled");
+
+        boolean changed = false;
+        long displayId;
+        if (o.get("display_id") == null) {
+            displayId = orderRepository.nextDisplayId(device.storeId());
+            jdbc.update("UPDATE orders SET display_id = ? WHERE id = ? AND display_id IS NULL", displayId, orderId);
+            changed = true;
+        } else {
+            displayId = ((Number) o.get("display_id")).longValue();
+        }
+        int added = insertPayments(orderId, r.payments(), Instant.now());
+        boolean becamePaid = false;
+        if (!"PAID".equals(status)) {
+            int version = ((Number) o.get("version")).intValue();
+            jdbc.update("UPDATE orders SET status = 'PAID', payment_reference = ?, version = ? WHERE id = ?",
+                paymentReference(r.payments()), version + 1, orderId);
+            history(orderId, "PAID", "offline");
+            becamePaid = true;
+            changed = true;
+        }
+        // An amount that differs from the server's total is flagged, not refused: the terminal already took the money.
+        if (r.totalAmount() != null && !same((BigDecimal) o.get("total_amount"), r.totalAmount())) {
+            jdbc.update("UPDATE orders SET price_differs = 1 WHERE id = ?", orderId);
+        }
+        return new Outcome(changed || added > 0 ? "UPDATED" : "ALREADY_SYNCED", becamePaid, displayId, (String) o.get("order_reference"));
+    }
+
     private record Outcome(String result, boolean becamePaid, long displayId, String reference) {}
 
     // ── validation (no database writes) ───────────────────────────────────────
@@ -120,6 +174,13 @@ public class OfflineOrderService {
                 "Totals do not add up: expected subtotal " + t.subtotal + ", tax " + t.tax + ", total " + t.total);
 
         List<OfflineOrderRequest.Payment> payments = r.payments() == null ? List.of() : r.payments();
+        validatePayments(payments);
+        if ("PAID".equals(r.status()) && payments.isEmpty())
+            throw OfflineOrderException.invalid("PAYMENT_MISSING", "A paid order needs its payment");
+    }
+
+    // Each payment needs its own id, a provider and the PAID outcome (shared by the order push and the payment-only push).
+    static void validatePayments(List<OfflineOrderRequest.Payment> payments) {
         Set<String> ids = new HashSet<>();
         for (var p : payments) {
             if (p.paymentId() == null || !UUID_FORMAT.matcher(p.paymentId()).matches() || !ids.add(p.paymentId()))
@@ -133,8 +194,6 @@ public class OfflineOrderService {
             if (p.authCode() != null && p.authCode().length() > 20)
                 throw OfflineOrderException.invalid("INVALID_REQUEST", "authCode is up to 20 characters");
         }
-        if ("PAID".equals(r.status()) && payments.isEmpty())
-            throw OfflineOrderException.invalid("PAYMENT_MISSING", "A paid order needs its payment");
     }
 
     record Totals(BigDecimal subtotal, BigDecimal tax, BigDecimal total, List<BigDecimal> lineTax) {}
@@ -212,7 +271,7 @@ public class OfflineOrderService {
             jdbc.update("UPDATE orders SET order_reference = ? WHERE id = ?", reference, r.orderId());
             wasChanged = true;
         }
-        int added = insertPayments(r);
+        int added = insertPayments(r.orderId(), r.payments(), r.createdAt());
         if (action == Action.MARK_PAID) {
             jdbc.update("UPDATE orders SET status = 'PAID', payment_reference = ?, version = ?, offline_pushed = 1, " +
                 "price_differs = GREATEST(price_differs, ?) WHERE id = ?",
@@ -258,7 +317,7 @@ public class OfflineOrderService {
         });
 
         history(r.orderId(), "CREATED", null);
-        insertPayments(r);
+        insertPayments(r.orderId(), r.payments(), r.createdAt());
         if (paid) history(r.orderId(), "PAID", "offline");
         else if ("CANCELLED".equals(r.status())) history(r.orderId(), "CANCELLED", "offline");
         return new Outcome("CREATED", paid, displayId, reference);
@@ -297,15 +356,15 @@ public class OfflineOrderService {
     }
 
     // Records the payments that are not stored yet; returns how many were added.
-    private int insertPayments(OfflineOrderRequest r) {
+    private int insertPayments(String orderId, List<OfflineOrderRequest.Payment> payments, Instant fallbackTime) {
         int added = 0;
-        if (r.payments() == null) return 0;
-        for (var p : r.payments()) {
+        if (payments == null) return 0;
+        for (var p : payments) {
             List<Map<String, Object>> byId = jdbc.queryForList(
                 "SELECT order_id, provider, provider_reference FROM payments WHERE id = ?", p.paymentId());
             if (!byId.isEmpty()) {
                 var e = byId.get(0);
-                if (!r.orderId().equals(e.get("order_id")) || !Objects.equals(p.provider(), e.get("provider"))
+                if (!orderId.equals(e.get("order_id")) || !Objects.equals(p.provider(), e.get("provider"))
                     || !Objects.equals(p.providerReference(), e.get("provider_reference")))
                     throw OfflineOrderException.conflict("PAYMENT_CONFLICT", "Payment " + p.paymentId() + " exists with different details");
                 continue;
@@ -313,14 +372,14 @@ public class OfflineOrderService {
             if (p.providerReference() != null) {
                 Integer same = jdbc.queryForObject(
                     "SELECT COUNT(*) FROM payments WHERE order_id = ? AND provider = ? AND provider_reference = ?",
-                    Integer.class, r.orderId(), p.provider(), p.providerReference());
+                    Integer.class, orderId, p.provider(), p.providerReference());
                 if (same != null && same > 0) continue; // the same terminal payment, already recorded
             }
-            Timestamp at = Timestamp.from(sensibleCreatedAt(p.createdAt() != null ? p.createdAt() : r.createdAt()));
+            Timestamp at = Timestamp.from(sensibleCreatedAt(p.createdAt() != null ? p.createdAt() : fallbackTime));
             jdbc.update("INSERT INTO payments (id, order_id, provider, outcome, provider_reference, detail, created_at) " +
-                "VALUES (?,?,?,'PAID',?,?,?)", p.paymentId(), r.orderId(), p.provider(), p.providerReference(), p.authCode(), at);
+                "VALUES (?,?,?,'PAID',?,?,?)", p.paymentId(), orderId, p.provider(), p.providerReference(), p.authCode(), at);
             if (p.authCode() != null || (p.notes() != null && !p.notes().isNull()) || Boolean.TRUE.equals(p.lateApproval())) {
-                insertConfirmedAttempt(r.orderId(), p, at);
+                insertConfirmedAttempt(orderId, p, at);
             }
             added++;
         }
@@ -338,8 +397,12 @@ public class OfflineOrderService {
     }
 
     private static String paymentReference(OfflineOrderRequest r) {
-        if (r.payments() == null || r.payments().isEmpty()) return null;
-        var p = r.payments().get(0);
+        return paymentReference(r.payments());
+    }
+
+    private static String paymentReference(List<OfflineOrderRequest.Payment> payments) {
+        if (payments == null || payments.isEmpty()) return null;
+        var p = payments.get(0);
         return p.providerReference() != null ? p.providerReference() : p.paymentId();
     }
 
