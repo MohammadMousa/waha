@@ -25,6 +25,9 @@ properties calls (`GET /api/admin/organization/properties/keys` lists them with 
 | offline_unpaid_cleanup_enabled | false |
 | offline_unpaid_cleanup_days_offset | 15 |
 | offline_audit_cleanup | false |
+| resource_cache_max_mb | 200 |
+| resource_cache_max_age_days | 30 |
+| resource_cache_recheck_minutes | 10 |
 
 `offline_mode` (one of `off`, `caching`, `full`; anything else is rejected with 400):
 
@@ -43,6 +46,17 @@ Local cleanup (kiosk side, read from `GET /api/config`):
   `offline_unpaid_cleanup_days_offset` days (allowed 1 to 365). Paid orders and dead-lettered orders are never deleted by it.
 - `offline_audit_cleanup` (true/false): the kiosk deletes local audit info older than the same days offset, only for orders
   already sent to the server. Unsent paid orders and dead-lettered orders keep theirs, because the device holds the only copy.
+
+Resource cache (kiosk side, all modes: product images, landing pages and the images they use; never logs or non-2xx answers):
+- The kiosk saves each resource it shows, once by hash, with an index from the address it requested to that hash, and shows the saved
+  copy while the server cannot be reached. A new copy replaces the saved one only after it has fully arrived.
+- `resource_cache_max_mb` (10 to 10240): over this total size the least recently shown files are removed first, down to about 90% of it.
+- `resource_cache_max_age_days` (1 to 365): a file is removed when it has not been shown for this many days, counted from the last time
+  it was shown. A file shown regularly never expires. A changed resource is replaced when shown, whatever its age.
+- `resource_cache_recheck_minutes` (1 to 1440): at most one check (`If-None-Match`) per file per this many minutes. It applies to path
+  addresses (`/resource/...`) only; by-id addresses (`/api/resources/{id}`) never change and are never checked again.
+- No cleanup runs while the server is unreachable. Server side facts: the ETag is `"<sha256>"` and must be sent back exactly; a replaced
+  image gets a new id; a deleted path answers 404 while a deleted-by-id resource still answers 200.
 
 Staggering (kiosk side, so many devices do not start together after an outage, a mass reboot or the auto-restart):
 - Once per app start the kiosk computes `delay = sync_pull_start_delay_seconds + (hash(deviceId) mod sync_stagger_seconds) + small random jitter`
@@ -81,7 +95,8 @@ Response: `{ "items": [...], "last": true|false, "next": {"since": "...", "after
 - `size` defaults to `sync_pull_patch_size`; the server caps it at 500.
 - Product item: id, barcode, sku, name, description, price (excluding VAT, as stored), priceWithVat, active, public, categoryId, imageResourceId, updatedAt.
 - All feeds need a session with a store; no or revoked session is `401`. Payment methods are global, store payment methods are for the session's store, the rest for the store's organization.
-- Rows deleted on the server are not announced (barcode replacement by the Odoo import is the one case); no tombstones in Phase 1.
+- Rows deleted on the server are announced in the removals list (see "Removals" below). Only three real deletes exist: a primary
+  barcode replaced by the Odoo import, an alternate barcode removed by an admin, and a gallery image removed from a product.
 - The existing `GET /api/products/sync` stays unchanged for old kiosks.
 - The kiosk must not take orders until products, barcodes and payment-methods have each completed one full pull.
 
@@ -142,6 +157,18 @@ The marker cannot prove an order exists (anyone can type it), which is why the w
 The JSON order call (`GET /api/orders/{id}`) keeps returning 404 for an unknown order; a web app that uses it must treat a 404
 for a well-formed UUID as "waiting" and poll.
 
+## 5d. Normal reads for the `caching` mode
+A kiosk in `caching` mode saves what it reads into its local tables. Product reads (`GET /api/products/barcode/{barcode}`, `GET /api/products`,
+`GET /api/products/search`, `GET /api/products/{id}`) answer exactly as before unless the call has `?full=1`. With it, every product also has:
+`priceExVat` (the stored price without VAT; `price` keeps its usual meaning, with VAT by default), `sku`, `updatedAt` and
+`barcodeList` (`[{id, barcode, isPrimary}]`, every barcode of the product, so an alternative barcode never scanned online can still be found
+offline). The list and search bodies keep their shape (`products, page, size, hasMore`). `publicListed` is the same as the feeds' `public`.
+Always present for everyone (extra fields only): categories (`GET /api/categories`) also return `key` and `updatedAt`
+(`publicVisible` = feed `public`, plus `active`, `sortOrder`; categories have no parent); payment methods (`GET /api/payment-methods`)
+also return `availableModes` (comma list as in the feed), `active` and `updatedAt`. The payment method list only contains methods that are
+on, valid for the mode and enabled for the store (its `sortOrder` is the store's), so a successful list replaces the cached list for that
+store and mode. A kiosk fills only the fields a read carries and never replaces a complete row with an incomplete one; a pulled row wins.
+
 ## 6. Order push: `POST /api/sync/orders`
 One order per call, one database transaction. Device session required. Body:
 ```json
@@ -196,6 +223,12 @@ Body: `{ "totalAmount": 10.35, "payments": [ { paymentId, provider, outcome: "PA
 The server records the payments, marks the order PAID (once: stock is deducted and Odoo is notified once), and answers like section 6:
 `{ result: UPDATED | ALREADY_SYNCED, orderId, displayId, orderReference }`. Repeating it is safe. A `totalAmount` that differs from the
 server's total only flags the order (`priceDiffers`); the money was already taken.
+Repeat safety (sections 6 and 6b): a payment is NOT added again when the order already has the same charge: the same `paymentId`; the same
+provider and `providerReference`; a payment whose reference equals `notes.terminalSessionId` (what the online terminal confirm stores);
+or the same `providerReference` and `authCode` under any provider name. Then the answer is `ALREADY_SYNCED`. Anything else is recorded,
+even on an order that is already PAID (a second real charge, a refund case). If `notes.terminalSessionId` is the id of the server's pending
+terminal attempt for this order, that attempt becomes CONFIRMED so the terminal app does not pick it up again. A caller that reuses the
+attempt id as `paymentId` no longer causes a server error: the attempt is confirmed instead.
 Errors: 404 `ORDER_NOT_FOUND` (the server does not have the order: send the whole order with section 6 instead), 409 `STORE_MISMATCH`,
 `ORDER_CANCELLED_ON_SERVER`, `PAYMENT_CONFLICT`, 422 `INVALID_REQUEST`, `PAYMENT_MISSING`. Same retry rules as section 6.
 Kiosk state: keep a synced flag on the order and on each payment. Order not synced: full push (section 6, includes its payments).
@@ -209,7 +242,12 @@ Order synced and payment not: payment-only push. Both synced: nothing.
    On a 4xx it shows the error and does not fall back.
 4. Payment: the terminal works over USB without the server. For a server-created order the kiosk uses the normal pay call; when that
    call cannot reach the server it keeps the approved payment locally and sends it with section 6b. Never lose an approved payment.
-5. The QR of a locally saved order carries `?offline=1` (section 5c). Orders created on the server use the normal link.
+5. Timed-out payments: when the pay or confirm call for a server-created order times out or cannot reach the server, the kiosk keeps that
+   payment and sends it with section 6b (fresh UUID as `paymentId`, its terminal session id in `notes.terminalSessionId`, the RRN as
+   `providerReference`, the approval code as `authCode`) with the usual back-off. No order read is needed first: the server checks inside
+   one step whether the order already has that charge and answers `ALREADY_SYNCED` if so (see the repeat-safety paragraph of section 6b).
+   A second real charge on a paid order is recorded, never dropped (a refund case).
+6. The QR of a locally saved order carries `?offline=1` (section 5c). Orders created on the server use the normal link.
 
 ## 7. Push rules (kiosk)
 - A paid order is saved in SQLite first, then pushed at once. On failure it stays PENDING.
@@ -221,3 +259,15 @@ Order synced and payment not: payment-only push. Both synced: nothing.
 
 ## 8. Not in Phase 1
 Offers and coupons (online only), new logins, reports, mobile payment, resource caching, hard-delete tombstones, sync versions.
+
+
+## Removals
+`GET /api/sync/removals?afterId=<id>&size=<n>` (device session with a store). Tables named in the list are the feed names:
+`barcodes` and `product-images` (the row id is the id you hold locally).
+- **Starting position:** call it with no `afterId` BEFORE the first full pull of each table. Nothing is listed; save `next.afterId`.
+  Pulls are upserts, so anything removed while the full pull runs is picked up by the first normal call.
+- **Normal call:** send the saved `afterId`. Response `{items:[{id, table, rowId, removedAt}], last, next:{afterId}, resetRequired, serverTime}`.
+  Delete each `rowId` from the local `table`, save `next.afterId` only after the page is committed, repeat while `last` is false.
+- **resetRequired:** the list was cleaned past your position (device offline longer than the keep period, default 180 days,
+  server setting `waha.sync.removals-retention-days`). No items come back; pull all tables in full, then save `next.afterId`.
+- Ids are never reused, so a removal cannot hit another row. Call it in the same cycle as the other pulls.

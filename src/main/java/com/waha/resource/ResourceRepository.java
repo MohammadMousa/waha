@@ -356,6 +356,11 @@ public class ResourceRepository {
     }
 
     public boolean removeGalleryImage(long productId, long resourceId) {
+        jdbcTemplate.update(
+            "INSERT INTO sync_removals (organization_id, table_name, row_id) " +
+            "SELECT p.company_id, 'product-images', i.id FROM product_images i JOIN products p ON p.id = i.product_id " +
+            "WHERE i.product_id = ? AND i.resource_id = ?",
+            productId, resourceId);
         int rows = jdbcTemplate.update(
             "DELETE FROM product_images WHERE product_id = ? AND resource_id = ?",
             productId, resourceId);

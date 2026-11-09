@@ -375,10 +375,13 @@ public class OfflineOrderService {
                     Integer.class, orderId, p.provider(), p.providerReference());
                 if (same != null && same > 0) continue; // the same terminal payment, already recorded
             }
+            if (alreadyRecorded(orderId, p)) continue; // the same charge, recorded another way (for example by the online confirm)
             Timestamp at = Timestamp.from(sensibleCreatedAt(p.createdAt() != null ? p.createdAt() : fallbackTime));
             jdbc.update("INSERT INTO payments (id, order_id, provider, outcome, provider_reference, detail, created_at) " +
                 "VALUES (?,?,?,'PAID',?,?,?)", p.paymentId(), orderId, p.provider(), p.providerReference(), p.authCode(), at);
-            if (p.authCode() != null || (p.notes() != null && !p.notes().isNull()) || Boolean.TRUE.equals(p.lateApproval())) {
+            String sessionId = terminalSessionId(p);
+            boolean closed = sessionId != null && confirmPendingAttempt(orderId, sessionId, p);
+            if (!closed && (p.authCode() != null || (p.notes() != null && !p.notes().isNull()) || Boolean.TRUE.equals(p.lateApproval()))) {
                 insertConfirmedAttempt(orderId, p, at);
             }
             added++;
@@ -386,11 +389,60 @@ public class OfflineOrderService {
         return added;
     }
 
+    // notes.terminalSessionId: the id of the server's terminal payment attempt this payment belongs to (optional).
+    private static String terminalSessionId(OfflineOrderRequest.Payment p) {
+        if (p.notes() == null || !p.notes().hasNonNull("terminalSessionId")) return null;
+        String id = p.notes().get("terminalSessionId").asText();
+        return id.isBlank() ? null : id;
+    }
+
+    // True when this order already has the same charge: a payment whose reference is the terminal session id
+    // (what the online confirm stores), or the same reference and approval code under any provider name.
+    private boolean alreadyRecorded(String orderId, OfflineOrderRequest.Payment p) {
+        String sessionId = terminalSessionId(p);
+        if (sessionId != null) {
+            Integer n = jdbc.queryForObject("SELECT COUNT(*) FROM payments WHERE order_id = ? AND provider_reference = ?",
+                Integer.class, orderId, sessionId);
+            if (n != null && n > 0) return true;
+        }
+        if (p.providerReference() != null && p.authCode() != null) {
+            Integer n = jdbc.queryForObject(
+                "SELECT COUNT(*) FROM payments WHERE order_id = ? AND provider_reference = ? AND detail = ?",
+                Integer.class, orderId, p.providerReference(), p.authCode());
+            return n != null && n > 0;
+        }
+        return false;
+    }
+
+    // The server's own pending attempt for this charge is closed, so the terminal app does not pick it up again.
+    // Returns true when an attempt of this order with that id exists (pending ones become confirmed).
+    private boolean confirmPendingAttempt(String orderId, String attemptId, OfflineOrderRequest.Payment p) {
+        Integer exists = jdbc.queryForObject("SELECT COUNT(*) FROM payment_attempts WHERE id = ? AND order_id = ?",
+            Integer.class, attemptId, orderId);
+        if (exists == null || exists == 0) return false;
+        ObjectNode notes = p.notes() != null && p.notes().isObject() ? ((ObjectNode) p.notes()).deepCopy() : mapper.createObjectNode();
+        if (Boolean.TRUE.equals(p.lateApproval())) notes.put("late_approval", true);
+        jdbc.update("UPDATE payment_attempts SET status = 'CONFIRMED', auth_code = ?, notes = ? WHERE id = ? AND status = 'PENDING'",
+            p.authCode(), notes.isEmpty() ? null : notes.toString(), attemptId);
+        return true;
+    }
+
     // Same audit trail an online terminal payment leaves: a confirmed attempt with the approval code and notes.
     private void insertConfirmedAttempt(String orderId, OfflineOrderRequest.Payment p, Timestamp at) {
         ObjectNode notes = p.notes() != null && p.notes().isObject() ? ((ObjectNode) p.notes()).deepCopy() : mapper.createObjectNode();
         if (Boolean.TRUE.equals(p.lateApproval())) notes.put("late_approval", true);
         String reference = p.providerReference() != null ? p.providerReference() : p.paymentId();
+        // The id may belong to the server's own pending attempt (a caller that reuses it): confirm that one instead of failing.
+        Integer taken = jdbc.queryForObject("SELECT COUNT(*) FROM payment_attempts WHERE id = ?", Integer.class, p.paymentId());
+        if (taken != null && taken > 0) {
+            Integer mine = jdbc.queryForObject("SELECT COUNT(*) FROM payment_attempts WHERE id = ? AND order_id = ?",
+                Integer.class, p.paymentId(), orderId);
+            if (mine == null || mine == 0)
+                throw OfflineOrderException.conflict("PAYMENT_CONFLICT", "Payment " + p.paymentId() + " exists with different details");
+            jdbc.update("UPDATE payment_attempts SET status = 'CONFIRMED', auth_code = ?, notes = ? WHERE id = ? AND status = 'PENDING'",
+                p.authCode(), notes.isEmpty() ? null : notes.toString(), p.paymentId());
+            return;
+        }
         jdbc.update("INSERT INTO payment_attempts (id, order_id, provider, provider_reference, redirect_url, expires_at, created_at, " +
             "status, auth_code, notes) VALUES (?,?,?,?,'',?,?,'CONFIRMED',?,?)",
             p.paymentId(), orderId, p.provider(), reference, at, at, p.authCode(), notes.isEmpty() ? null : notes.toString());

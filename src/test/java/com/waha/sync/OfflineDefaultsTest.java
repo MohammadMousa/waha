@@ -9,17 +9,20 @@ class OfflineDefaultsTest {
 
     @Test
     void everyOfflinePropertyHasADefaultAndOfflineIsOffByDefault() {
-        assertEquals(15, OfflineDefaults.VALUES.size());
+        assertEquals(18, OfflineDefaults.VALUES.size());
         assertEquals("180", OfflineDefaults.VALUES.get("sync_stagger_seconds"));
         assertEquals("false", OfflineDefaults.VALUES.get("scan_disabled_products"));
         assertEquals("false", OfflineDefaults.VALUES.get("offline_unpaid_cleanup_enabled"));
         assertEquals("15", OfflineDefaults.VALUES.get("offline_unpaid_cleanup_days_offset"));
         assertEquals("false", OfflineDefaults.VALUES.get("offline_audit_cleanup"));
+        assertEquals("200", OfflineDefaults.VALUES.get("resource_cache_max_mb"));
+        assertEquals("30", OfflineDefaults.VALUES.get("resource_cache_max_age_days"));
+        assertEquals("10", OfflineDefaults.VALUES.get("resource_cache_recheck_minutes"));
         assertEquals("off", OfflineDefaults.VALUES.get("offline_mode"));
         assertEquals("true", OfflineDefaults.VALUES.get("push_paid_orders_only"));
         assertEquals("60", OfflineDefaults.VALUES.get("sync_pull_interval_minutes"));
         assertEquals("3", OfflineDefaults.VALUES.get("sync_push_interval_minutes"));
         assertTrue(OfflineDefaults.VALUES.keySet().stream().allMatch(k -> k.equals("offline_mode")
-            || k.equals("push_paid_orders_only") || k.equals("scan_disabled_products") || k.startsWith("offline_") || k.startsWith("sync_")));
+            || k.equals("push_paid_orders_only") || k.equals("scan_disabled_products") || k.startsWith("offline_") || k.startsWith("resource_cache_") || k.startsWith("sync_")));
     }
 }

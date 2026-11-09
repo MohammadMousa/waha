@@ -28,7 +28,7 @@ public class PaymentMethodRepository {
     // the global sort_order.
     public List<PaymentMethodSummary> findForStore(long storeId, String mode) {
         return jdbcTemplate.query(
-            "SELECT pm.id, pm.key, pm.display_name, pm.provider, pm.offline_capable, pm.payment_url, " +
+            "SELECT pm.id, pm.key, pm.display_name, pm.provider, pm.offline_capable, pm.payment_url, pm.available_modes, pm.active, pm.updated_at, " +
             "       COALESCE(pms.sort_order, pm.sort_order) AS effective_sort_order " +
             "FROM payment_methods pm " +
             "LEFT JOIN payment_methods_store pms " +
@@ -45,7 +45,10 @@ public class PaymentMethodRepository {
                 rs.getString("provider"),
                 rs.getBoolean("offline_capable"),
                 rs.getInt("effective_sort_order"),
-                rs.getString("payment_url")
+                rs.getString("payment_url"),
+                rs.getString("available_modes"),
+                rs.getBoolean("active"),
+                rs.getTimestamp("updated_at") == null ? null : rs.getTimestamp("updated_at").toInstant()
             ),
             storeId, mode
         );
@@ -90,6 +93,24 @@ public class PaymentMethodRepository {
             "ON DUPLICATE KEY UPDATE active = VALUES(active)",
             methodId, storeId, active
         );
+    }
+
+    public record GlobalMethodView(long id, String key, JsonNode displayName, String provider, boolean active) {}
+
+    // Every method, including globally-off ones (the normal admin list hides them).
+    public List<GlobalMethodView> findAllGlobal() {
+        return jdbcTemplate.query(
+            "SELECT id, `key`, display_name, provider, active FROM payment_methods ORDER BY sort_order, id",
+            (rs, i) -> new GlobalMethodView(rs.getLong("id"), rs.getString("key"),
+                parseJsonOrNull(rs.getString("display_name")), rs.getString("provider"), rs.getBoolean("active")));
+    }
+
+    // Sets the global flag. False when the method does not exist.
+    public boolean setGlobalActive(long id, boolean active) {
+        Integer found = jdbcTemplate.queryForObject("SELECT COUNT(*) FROM payment_methods WHERE id = ?", Integer.class, id);
+        if (found == null || found == 0) return false;
+        jdbcTemplate.update("UPDATE payment_methods SET active = ? WHERE id = ?", active, id);
+        return true;
     }
 
     private JsonNode parseJsonOrNull(String raw) {

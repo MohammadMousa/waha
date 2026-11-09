@@ -36,11 +36,14 @@ public class ProductController {
     private final VatPricing vatPricing;
     private final MissingProductTracker missTracker;
     private final com.waha.config.ConfigService configService;
+    private final com.fasterxml.jackson.databind.ObjectMapper mapper;
 
     public ProductController(ProductRepository productRepository, StoreRepository storeRepository,
                               SessionService sessionService, ResourceRepository resourceRepository,
                               VatPricing vatPricing, MissingProductTracker missTracker,
-                              com.waha.config.ConfigService configService) {
+                              com.waha.config.ConfigService configService,
+                              com.fasterxml.jackson.databind.ObjectMapper mapper) {
+        this.mapper = mapper;
         this.productRepository = productRepository;
         this.storeRepository = storeRepository;
         this.sessionService = sessionService;
@@ -62,6 +65,7 @@ public class ProductController {
     public ResponseEntity<?> browse(@RequestParam(required = false) Long storeId,
                                      @RequestHeader(value = "Authorization", required = false) String authHeader,
                                      @RequestParam(required = false) Long categoryId,
+                                     @RequestParam(required = false) String full,
                                      @RequestParam(defaultValue = "0") int page,
                                      @RequestParam(defaultValue = "" + DEFAULT_PAGE_SIZE) int size) {
         Long resolvedStoreId = sessionService.resolveStoreId(storeId, authHeader);
@@ -73,7 +77,7 @@ public class ProductController {
         int cappedSize = Math.min(Math.max(size, 1), MAX_PAGE_SIZE);
         long companyId = storeRepository.findCompanyId(resolvedStoreId);
         var result = productRepository.browseByStore(companyId, categoryId, page, cappedSize);
-        return ResponseEntity.ok(new ProductListResponse(views(result.products(), resolvedStoreId, companyId), page, cappedSize, result.hasMore()));
+        return ResponseEntity.ok(listBody(result.products(), resolvedStoreId, companyId, page, cappedSize, result.hasMore(), full));
     }
 
     // Product detail page - tapping an item in the browse list above. Not
@@ -83,7 +87,7 @@ public class ProductController {
     // render (same "don't gatekeep on something already established"
     // principle as removing the checkout-time scope check).
     @GetMapping("/{id}")
-    public ResponseEntity<?> getById(@PathVariable long id) {
+    public ResponseEntity<?> getById(@PathVariable long id, @RequestParam(required = false) String full) {
         Optional<Product> product = productRepository.findByIds(List.of(id)).stream().findFirst();
         if (product.isEmpty()) return ResponseEntity.status(404).body(new ErrorResponse("Product " + id + " not found"));
         // Include gallery image resource IDs, tags, and all barcodes inline so the client avoids extra round-trips.
@@ -108,6 +112,13 @@ public class ProductController {
         resp.put("imageResourceId", product.get().imageResourceId());
         resp.put("imageResourceIds", galleryIds);
         resp.put("tags",            tags);
+        if (isFull(full)) {
+            var extra = productRepository.findExtras(List.of(id)).get(id);
+            resp.put("priceExVat",  product.get().price());
+            resp.put("sku",         extra == null ? null : extra.sku());
+            resp.put("updatedAt",   extra == null ? null : extra.updatedAt());
+            resp.put("barcodeList", productRepository.findBarcodesByProduct(id).stream().map(ProductController::barcodeJson).toList());
+        }
         return ResponseEntity.ok(resp);
     }
 
@@ -115,6 +126,7 @@ public class ProductController {
     @GetMapping("/barcode/{barcode}")
     public ResponseEntity<?> getByBarcode(@PathVariable String barcode,
                                            @RequestParam(required = false) Long storeId,
+                                           @RequestParam(required = false) String full,
                                            @RequestHeader(value = "Authorization", required = false) String authHeader) {
         Long resolvedStoreId = sessionService.resolveStoreId(storeId, authHeader);
         if (resolvedStoreId == null) {
@@ -132,6 +144,7 @@ public class ProductController {
         if (!product.get().active() && !configService.boolProperty(companyId, "scan_disabled_products", false)) {
             return ResponseEntity.status(409).body(new ErrorResponse("Product is not currently sellable"));
         }
+        if (isFull(full)) return ResponseEntity.ok(fullViews(List.of(product.get()), resolvedStoreId, companyId).get(0));
         return ResponseEntity.ok(views(List.of(product.get()), resolvedStoreId, companyId).get(0));
     }
 
@@ -140,6 +153,7 @@ public class ProductController {
     @GetMapping("/search")
     public ResponseEntity<?> search(@RequestParam String q,
                                      @RequestParam(required = false) Long storeId,
+                                     @RequestParam(required = false) String full,
                                      @RequestHeader(value = "Authorization", required = false) String authHeader,
                                      @RequestParam(defaultValue = "0") int page,
                                      @RequestParam(defaultValue = "" + DEFAULT_PAGE_SIZE) int size) {
@@ -154,7 +168,7 @@ public class ProductController {
         int cappedSize = Math.min(Math.max(size, 1), MAX_PAGE_SIZE);
         long companyId = storeRepository.findCompanyId(resolvedStoreId);
         var result = productRepository.searchByStore(companyId, q.trim(), page, cappedSize);
-        return ResponseEntity.ok(new ProductListResponse(views(result.products(), resolvedStoreId, companyId), page, cappedSize, result.hasMore()));
+        return ResponseEntity.ok(listBody(result.products(), resolvedStoreId, companyId, page, cappedSize, result.hasMore(), full));
     }
 
     // Delta sync for an offline local catalog cache, scoped to one store's
@@ -183,6 +197,49 @@ public class ProductController {
                 withVat ? gross : i.price(), i.active(), i.imageResourceId(), i.updatedAt(), gross);
         }).toList();
         return ResponseEntity.ok(new ProductSyncResponse(syncedAt, items));
+    }
+
+    private static boolean isFull(String full) {
+        return "1".equals(full) || "true".equalsIgnoreCase(full);
+    }
+
+    private static Map<String, Object> barcodeJson(ProductRepository.BarcodeEntry b) {
+        Map<String, Object> m = new java.util.LinkedHashMap<>();
+        m.put("id", b.id());
+        m.put("barcode", b.barcode());
+        m.put("isPrimary", b.isPrimary());
+        return m;
+    }
+
+    private Object listBody(List<Product> products, long storeId, long companyId, int page, int size, boolean hasMore, String full) {
+        if (!isFull(full)) return new ProductListResponse(views(products, storeId, companyId), page, size, hasMore);
+        Map<String, Object> body = new java.util.LinkedHashMap<>();
+        body.put("products", fullViews(products, storeId, companyId));
+        body.put("page", page);
+        body.put("size", size);
+        body.put("hasMore", hasMore);
+        return body;
+    }
+
+    // Opt-in (?full=1) product answers for a kiosk that keeps a local copy: the normal fields plus the price
+    // without VAT, sku, updatedAt and every barcode. Without the flag nothing changes.
+    private List<Map<String, Object>> fullViews(List<Product> products, long storeId, long companyId) {
+        var ids = products.stream().map(Product::id).toList();
+        var extras = productRepository.findExtras(ids);
+        var barcodes = productRepository.findBarcodesByProducts(ids);
+        var views = views(products, storeId, companyId);
+        List<Map<String, Object>> out = new java.util.ArrayList<>();
+        for (int i = 0; i < products.size(); i++) {
+            Product p = products.get(i);
+            Map<String, Object> m = mapper.convertValue(views.get(i), new com.fasterxml.jackson.core.type.TypeReference<java.util.LinkedHashMap<String, Object>>() {});
+            var extra = extras.get(p.id());
+            m.put("priceExVat", p.price());
+            m.put("sku", extra == null ? null : extra.sku());
+            m.put("updatedAt", extra == null ? null : extra.updatedAt());
+            m.put("barcodeList", barcodes.getOrDefault(p.id(), List.of()).stream().map(ProductController::barcodeJson).toList());
+            out.add(m);
+        }
+        return out;
     }
 
     // Customer-facing price fields: with VAT unless the organization turned that off (prices_exclude_vat).

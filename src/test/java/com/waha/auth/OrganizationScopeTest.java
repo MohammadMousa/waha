@@ -27,5 +27,7 @@ class OrganizationScopeTest {
         assertFalse(OrganizationScope.writeNeedsOrganization("POST", "/api/admin/users"));
         assertFalse(OrganizationScope.writeNeedsOrganization("PUT", "/api/config"));
         assertFalse(OrganizationScope.writeNeedsOrganization("PUT", "/api/admin/organization/properties"));
+        assertFalse(OrganizationScope.writeNeedsOrganization("PUT", "/api/payment-methods/3/active"));
+        assertTrue(OrganizationScope.writeNeedsOrganization("PUT", "/api/payment-methods/3/store-active"));
     }
 }

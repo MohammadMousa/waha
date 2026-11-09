@@ -53,6 +53,14 @@ public class RoleRepository {
             userId, storeId, storeId, storeId);
     }
 
+    // True when the user holds the organization owner role (any company) or the super admin role.
+    public boolean isOwnerOrSuperAdmin(long userId) {
+        Integer n = jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM user_roles ur JOIN roles r ON r.id = ur.role_id " +
+            "WHERE ur.user_id = ? AND r.name IN ('SUPER_ADMIN', 'ORGANIZATION_OWNER')", Integer.class, userId);
+        return n != null && n > 0;
+    }
+
     // Returns the union of permissions from all roles that cover the given store.
     // storeId=null → only SYSTEM-scope roles match (platform-only operations).
     public Set<String> resolvePermissions(long userId, Long storeId) {

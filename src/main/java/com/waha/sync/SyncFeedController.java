@@ -27,13 +27,49 @@ public class SyncFeedController {
     private final StoreRepository storeRepository;
     private final ConfigService configService;
     private final SyncFeedRepository feeds;
+    private final SyncRemovalRepository removals;
 
     public SyncFeedController(SessionService sessionService, StoreRepository storeRepository,
-                              ConfigService configService, SyncFeedRepository feeds) {
+                              ConfigService configService, SyncFeedRepository feeds,
+                              SyncRemovalRepository removals) {
         this.sessionService = sessionService;
         this.storeRepository = storeRepository;
         this.configService = configService;
         this.feeds = feeds;
+        this.removals = removals;
+    }
+
+    // Rows deleted on the server. Without afterId: starting position only (nothing listed). With afterId: the removals
+    // after it. resetRequired = the list was cleaned past the device's position, so it must pull the tables in full.
+    @GetMapping("/removals")
+    public ResponseEntity<?> removals(@RequestParam(required = false) Long afterId,
+                                      @RequestParam(required = false) Integer size,
+                                      @RequestHeader(value = "Authorization", required = false) String authHeader) {
+        UserSession session = sessionService.requireSession(authHeader);
+        if (session.storeId() == null) {
+            return ResponseEntity.status(400).body(new ErrorResponse("No store selected for this session"));
+        }
+        long orgId = storeRepository.findCompanyId(session.storeId());
+        int limit = pageSize(size, orgId);
+        Map<String, Object> body = new LinkedHashMap<>();
+        long latest = removals.latestId(orgId);
+        boolean reset = afterId != null && afterId < removals.purgedUpTo();
+        List<Map<String, Object>> items = List.of();
+        boolean last = true;
+        long next = latest;
+        if (afterId != null && !reset) {
+            var rows = removals.after(orgId, afterId, limit + 1);
+            last = rows.size() <= limit;
+            var page = last ? rows : rows.subList(0, limit);
+            items = page.stream().map(SyncRemovalRepository.Removal::fields).toList();
+            next = page.isEmpty() ? afterId : page.get(page.size() - 1).id();
+        }
+        body.put("items", items);
+        body.put("last", last);
+        body.put("next", Map.of("afterId", next));
+        body.put("resetRequired", reset);
+        body.put("serverTime", Instant.now());
+        return ResponseEntity.ok(body);
     }
 
     @GetMapping("/{table}")

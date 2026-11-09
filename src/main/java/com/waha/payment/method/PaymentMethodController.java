@@ -2,6 +2,7 @@ package com.waha.payment.method;
 
 import com.waha.auth.Permission;
 import com.waha.auth.SessionService;
+import com.waha.auth.UserSession;
 import com.waha.common.ErrorResponse;
 import com.waha.common.ForbiddenException;
 import org.springframework.http.ResponseEntity;
@@ -84,6 +85,42 @@ public class PaymentMethodController {
             return ResponseEntity.status(403).body(new ErrorResponse(e.getMessage()));
         }
         paymentMethodRepository.setStoreActive(id, resolvedStoreId, active);
+        return ResponseEntity.ok().build();
+    }
+    // Organization owner or super admin only: payment_methods has no company column, so this list and the switch below
+    // affect every company on the server.
+    private void requireOwner(String authHeader) {
+        UserSession session = sessionService.requireSession(authHeader);
+        if (!session.isUserSession()
+                || !sessionService.isOwnerOrSuperAdmin(session.userId())) {
+            throw new ForbiddenException("Permission denied: organization owner or super admin only");
+        }
+    }
+
+    // Admin: every payment method, including the ones switched off globally. active = the global flag.
+    @GetMapping("/admin/all")
+    public ResponseEntity<?> adminListAll(@RequestHeader(value = "Authorization", required = false) String authHeader) {
+        try {
+            requireOwner(authHeader);
+        } catch (ForbiddenException e) {
+            return ResponseEntity.status(403).body(new ErrorResponse(e.getMessage()));
+        }
+        return ResponseEntity.ok(paymentMethodRepository.findAllGlobal());
+    }
+
+    // Admin: switch one payment method on or off for the whole system (payment_methods.active).
+    @PutMapping("/{id}/active")
+    public ResponseEntity<?> setGlobalActive(@PathVariable long id,
+                                              @RequestParam boolean active,
+                                              @RequestHeader(value = "Authorization", required = false) String authHeader) {
+        try {
+            requireOwner(authHeader);
+        } catch (ForbiddenException e) {
+            return ResponseEntity.status(403).body(new ErrorResponse(e.getMessage()));
+        }
+        if (!paymentMethodRepository.setGlobalActive(id, active)) {
+            return ResponseEntity.status(404).body(new ErrorResponse("Payment method not found"));
+        }
         return ResponseEntity.ok().build();
     }
 }

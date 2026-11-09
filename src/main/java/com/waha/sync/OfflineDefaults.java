@@ -26,6 +26,9 @@ public final class OfflineDefaults {
         m.put("offline_unpaid_cleanup_enabled", "false");
         m.put("offline_unpaid_cleanup_days_offset", "15");
         m.put("offline_audit_cleanup", "false");
+        m.put("resource_cache_max_mb", "200");
+        m.put("resource_cache_max_age_days", "30");
+        m.put("resource_cache_recheck_minutes", "10");
         VALUES = Collections.unmodifiableMap(m);
     }
 

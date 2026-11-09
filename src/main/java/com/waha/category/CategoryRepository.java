@@ -24,7 +24,7 @@ public class CategoryRepository {
     public List<Category> findForStore(long companyId, boolean publicOnly) {
         String publicFilter = publicOnly ? " AND c.public = TRUE" : "";
         return jdbc.query(
-            "SELECT id, company_id, name, public, active, sort_order, image_resource_id " +
+            "SELECT id, company_id, name, public, active, sort_order, image_resource_id, `key`, updated_at " +
             "FROM categories c " +
             "WHERE c.active = TRUE AND c.company_id = :companyId" +
             publicFilter +
@@ -36,7 +36,7 @@ public class CategoryRepository {
 
     public Optional<Category> findById(long id) {
         List<Category> results = jdbc.query(
-            "SELECT id, company_id, name, public, active, sort_order, image_resource_id " +
+            "SELECT id, company_id, name, public, active, sort_order, image_resource_id, `key`, updated_at " +
             "FROM categories WHERE id = :id",
             Map.of("id", id), (rs, i) -> mapCategory(rs)
         );
@@ -75,7 +75,9 @@ public class CategoryRepository {
             rs.getBoolean("public"),
             rs.getBoolean("active"),
             rs.getInt("sort_order"),
-            imageResourceId
+            imageResourceId,
+            rs.getString("key"),
+            rs.getTimestamp("updated_at") == null ? null : rs.getTimestamp("updated_at").toInstant()
         );
     }
 

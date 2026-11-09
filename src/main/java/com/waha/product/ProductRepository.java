@@ -268,6 +268,29 @@ public class ProductRepository {
 
     public record BarcodeEntry(long id, String barcode, boolean isPrimary) {}
 
+    public record ProductExtra(String sku, java.time.Instant updatedAt) {}
+
+    // sku and updated_at of several products at once (the opt-in "full" product answers).
+    public Map<Long, ProductExtra> findExtras(java.util.Collection<Long> ids) {
+        Map<Long, ProductExtra> out = new java.util.HashMap<>();
+        if (ids.isEmpty()) return out;
+        jdbc.query("SELECT id, sku, updated_at FROM products WHERE id IN (:ids)", Map.of("ids", ids),
+            rs -> { out.put(rs.getLong("id"), new ProductExtra(rs.getString("sku"),
+                rs.getTimestamp("updated_at") == null ? null : rs.getTimestamp("updated_at").toInstant())); });
+        return out;
+    }
+
+    // All barcodes of several products at once, primary first.
+    public Map<Long, List<BarcodeEntry>> findBarcodesByProducts(java.util.Collection<Long> ids) {
+        Map<Long, List<BarcodeEntry>> out = new java.util.HashMap<>();
+        if (ids.isEmpty()) return out;
+        jdbc.query("SELECT id, product_id, barcode, is_primary FROM product_barcodes WHERE product_id IN (:ids) " +
+                "ORDER BY is_primary DESC, id ASC", Map.of("ids", ids),
+            rs -> { out.computeIfAbsent(rs.getLong("product_id"), k -> new ArrayList<>())
+                .add(new BarcodeEntry(rs.getLong("id"), rs.getString("barcode"), rs.getBoolean("is_primary"))); });
+        return out;
+    }
+
     public List<BarcodeEntry> findBarcodesByProduct(long productId) {
         return jdbc.query(
             "SELECT id, barcode, is_primary FROM product_barcodes WHERE product_id = :productId ORDER BY is_primary DESC, id ASC",
@@ -285,6 +308,12 @@ public class ProductRepository {
 
     // Returns false if the barcode was not found or is primary (primary cannot be removed).
     public boolean removeBarcode(long productId, String barcode) {
+        jdbc.getJdbcTemplate().update(
+            "INSERT INTO sync_removals (organization_id, table_name, row_id) " +
+            "SELECT p.company_id, 'barcodes', b.id FROM product_barcodes b JOIN products p ON p.id = b.product_id " +
+            "WHERE b.product_id = ? AND b.barcode = ? AND b.is_primary = 0",
+            productId, barcode
+        );
         int rows = jdbc.getJdbcTemplate().update(
             "DELETE FROM product_barcodes WHERE product_id = ? AND barcode = ? AND is_primary = 0",
             productId, barcode

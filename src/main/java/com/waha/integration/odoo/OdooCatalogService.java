@@ -305,6 +305,11 @@ public class OdooCatalogService {
             updateProduct(localId, nameJson, BigDecimal.valueOf(price), localCategoryId, active);
             // Keep primary barcode in product_barcodes in sync with Odoo's barcode.
             jdbc.getJdbcTemplate().update(
+                "INSERT INTO sync_removals (organization_id, table_name, row_id) " +
+                "SELECT p.company_id, 'barcodes', b.id FROM product_barcodes b JOIN products p ON p.id = b.product_id " +
+                "WHERE b.product_id = ? AND b.is_primary = 1 AND b.barcode != ?",
+                localId, barcode);
+            jdbc.getJdbcTemplate().update(
                 "DELETE FROM product_barcodes WHERE product_id = ? AND is_primary = 1 AND barcode != ?",
                 localId, barcode);
             jdbc.getJdbcTemplate().update(

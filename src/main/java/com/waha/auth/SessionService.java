@@ -284,6 +284,10 @@ public class SessionService {
 
     // Returns the union of permissions from all roles that cover the given store via hierarchy.
     // storeId=null → only SYSTEM-scope roles match (platform-level operations).
+    public boolean isOwnerOrSuperAdmin(long userId) {
+        return roleRepository.isOwnerOrSuperAdmin(userId);
+    }
+
     public Set<String> resolvePermissions(long userId, Long storeId) {
         return roleRepository.resolvePermissions(userId, storeId);
     }

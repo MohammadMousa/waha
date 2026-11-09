@@ -75,6 +75,12 @@ public class OrgPropertiesController {
             new PropertySpec("integer", "Age in days; local unpaid orders (and audit info, when its cleanup is on) older than this are deleted (default 15)", "1–365 days"));
         KNOWN_KEYS.put("offline_audit_cleanup",
             new PropertySpec("boolean", "Kiosks delete local audit info of already-sent orders older than the days offset (default false)", "true or false"));
+        KNOWN_KEYS.put("resource_cache_max_mb",
+            new PropertySpec("integer", "Total size cap of the kiosk's saved images and pages; over it the least recently shown files are removed first (default 200)", "10–10240 MB"));
+        KNOWN_KEYS.put("resource_cache_max_age_days",
+            new PropertySpec("integer", "A saved file is removed when it has not been shown for this many days (default 30)", "1–365 days"));
+        KNOWN_KEYS.put("resource_cache_recheck_minutes",
+            new PropertySpec("integer", "At most one check per saved page or file address for changes in this many minutes (default 10)", "1–1440 minutes"));
         KNOWN_KEYS.put("push_paid_orders_only",
             new PropertySpec("boolean", "Kiosks send only paid orders; unpaid ones stay on the device (default true)", "true or false"));
     }
@@ -219,6 +225,9 @@ public class OrgPropertiesController {
                 yield (v.equals("off") || v.equals("caching") || v.equals("full")) ? null
                     : key + " must be 'off', 'caching' or 'full'";
             }
+            case "resource_cache_max_mb"             -> intInRange(key, value, 10, 10240);
+            case "resource_cache_max_age_days"       -> intInRange(key, value, 1, 365);
+            case "resource_cache_recheck_minutes"    -> intInRange(key, value, 1, 1440);
             case "offline_unpaid_cleanup_days_offset" -> intInRange(key, value, 1, 365);
             case "enable_logging", "device_auto_restart_enabled", "prices_exclude_vat",
                  "push_paid_orders_only", "scan_disabled_products",

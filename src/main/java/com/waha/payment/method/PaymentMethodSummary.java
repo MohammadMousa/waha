@@ -12,4 +12,5 @@ import com.fasterxml.jackson.databind.JsonNode;
 //   SIMULATED    = dev-only instant success
 // paymentUrl: only set for PAYMENT_URL provider — the web-app base URL the
 // kiosk appends /invoice/{orderId} to and encodes as QR.
-public record PaymentMethodSummary(long id, String key, JsonNode displayName, String provider, boolean offlineCapable, int sortOrder, String paymentUrl) {}
+public record PaymentMethodSummary(long id, String key, JsonNode displayName, String provider, boolean offlineCapable, int sortOrder, String paymentUrl,
+                                   String availableModes, boolean active, java.time.Instant updatedAt) {}
