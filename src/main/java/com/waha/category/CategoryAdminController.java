@@ -39,4 +39,23 @@ public class CategoryAdminController {
         categoryRepository.patch(id, body);
         return ResponseEntity.ok().build();
     }
+
+    // Only an empty category can be deleted. It is a real delete (devices learn about it through the removals feed).
+    @DeleteMapping("/{id}")
+    public ResponseEntity<?> delete(
+            @RequestHeader(value = "Authorization", required = false) String auth,
+            @PathVariable long id) {
+        var opt = categoryRepository.findById(id);
+        if (opt.isEmpty()) {
+            return ResponseEntity.status(404).body(new ErrorResponse("Category not found: " + id));
+        }
+        sessionService.requirePermission(auth, Permission.MANAGE_CATEGORIES, opt.get().companyId());
+        long n = categoryRepository.productCount(id);
+        if (n > 0) {
+            return ResponseEntity.status(409).body(new ErrorResponse(
+                "Category has " + n + (n == 1 ? " product" : " products") + ", move or delete them first"));
+        }
+        categoryRepository.delete(id);
+        return ResponseEntity.ok().build();
+    }
 }

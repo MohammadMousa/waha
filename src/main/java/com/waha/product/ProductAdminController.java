@@ -166,7 +166,12 @@ public class ProductAdminController {
         Optional<Product> opt = productRepository.findById(id);
         if (opt.isEmpty()) return ResponseEntity.status(404).body(new ErrorResponse("Product not found: " + id));
         sessionService.requirePermissionForOrg(auth, Permission.EDIT_PRODUCTS, opt.get().companyId());
-        productRepository.deactivate(id);
+        List<String> used = productRepository.usedIn(id);
+        if (!used.isEmpty()) {
+            return ResponseEntity.status(409).body(new ErrorResponse(
+                "Product is used in " + String.join(", ", used) + ", deactivate it instead"));
+        }
+        productRepository.hardDelete(id);
         return ResponseEntity.ok().build();
     }
 }

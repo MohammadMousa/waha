@@ -158,6 +158,24 @@ PUT  /api/payment-methods/{id}/store-active?active=true&storeId={id}
 
 Requires `MANAGE_STORES` permission. Upserts a row in `payment_methods_store`. Absence of a row = method inherits global `active` state.
 
+### Global switch and icon (organization owner or super admin)
+
+```
+GET  /api/payment-methods/admin/all               → [{id, key, displayName, provider, availableModes[], offlineCapable, active, sortOrder, paymentUrl, iconResourceId}]
+PATCH /api/payment-methods/{id}                   → edit any of displayName {ar,en}, provider, availableModes, offlineCapable, active, sortOrder, paymentUrl
+PUT  /api/payment-methods/{id}/active?active=true|false
+PUT  /api/payment-methods/{id}/icon?resourceId=7 → set the icon; leave resourceId out to clear it
+```
+
+PATCH sends only the fields to change and returns the updated method (200, same shape as one list row). 400 `{"message":...}` for:
+`key` sent, unknown field, empty body, bad provider, empty or unknown modes, blank `ar`/`en` name, a `paymentUrl` that is not a full http(s)
+address, a `paymentUrl` on a provider other than PAYMENT_URL, or PAYMENT_URL without a URL. `""` or null clears the URL. Changing the provider
+away from PAYMENT_URL needs `"paymentUrl": null` in the same call. Every change moves `updated_at`, so kiosks get it in the normal pull.
+
+`iconResourceId` is a resource id (upload the image with the normal resource upload first) or null. When it is null the app
+uses its own fixed icon. 404 `{"message":"Resource not found"}` for an unknown resource, 404 `{"message":"Payment method not found"}`
+for an unknown method. The id is also returned by `GET /api/payment-methods` and the `payment-methods` pull feed (`iconResourceId`).
+
 ### Configure Mobile Payment URL
 
 Set `payment_url` on the `mobile_payment` row in `payment_methods` to the Shopping-mode web-app URL (e.g. `https://store.example.com`). The kiosk appends `/invoice/{orderId}` and encodes it as QR. Leave empty to disable the method even if globally active.

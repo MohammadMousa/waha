@@ -36,8 +36,9 @@ final class OrganizationScope {
 
     static boolean writeNeedsOrganization(String method, String path) {
         if (!isWrite(method)) return false;
-        // The global payment-method switch is system wide, so it names no organization.
-        if (path != null && path.startsWith("/api/payment-methods/") && path.endsWith("/active")) return false;
+        // The global payment-method switch and icon are system wide, so it names no organization.
+        if (path != null && path.startsWith("/api/payment-methods/") && (path.endsWith("/active") || path.endsWith("/icon"))) return false;
+        if ("PATCH".equals(method) && path != null && path.matches("/api/payment-methods/\\d+")) return false;
         for (String prefix : WRITE_EXEMPT_PREFIXES) if (path != null && path.startsWith(prefix)) return false;
         return true;
     }

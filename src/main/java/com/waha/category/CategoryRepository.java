@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -63,6 +64,19 @@ public class CategoryRepository {
             "UPDATE categories SET " + String.join(", ", setClauses) + " WHERE id = ?",
             params.toArray()
         );
+    }
+
+    public long productCount(long id) {
+        Long n = jdbc.queryForObject("SELECT COUNT(*) FROM products WHERE category_id = :id", Map.of("id", id), Long.class);
+        return n == null ? 0 : n;
+    }
+
+    // Really deletes an empty category and records the removal for devices.
+    @Transactional
+    public void delete(long id) {
+        jdbc.getJdbcTemplate().update(
+            "INSERT INTO sync_removals (organization_id, table_name, row_id) SELECT company_id, 'categories', id FROM categories WHERE id = ?", id);
+        jdbc.getJdbcTemplate().update("DELETE FROM categories WHERE id = ?", id);
     }
 
     private Category mapCategory(java.sql.ResultSet rs) throws java.sql.SQLException {

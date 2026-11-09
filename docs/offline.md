@@ -143,7 +143,7 @@ Always show a line as net + that line's tax. Never show unit `priceWithVat` x qu
 ## 5b. Payment methods
 Both feeds are needed. A method is offered when: `payment-methods` row is active, its `availableModes` contains KIOSK,
 and `store-payment-methods` has no row for it or that row is active. Order by the store row's `sortOrder` when set, else the
-global `sortOrder`. A PAYMENT_URL method also needs a non-empty `paymentUrl`. While offline, offer only methods with `offlineCapable` true.
+global `sortOrder`. If the `payment-methods` row has `iconResourceId`, show that image (resource cache) instead of the fixed local icon. A PAYMENT_URL method also needs a non-empty `paymentUrl`. While offline, offer only methods with `offlineCapable` true.
 
 ## 5c. Invoice QR for orders not pushed yet
 The kiosk builds the link itself: `<invoiceBaseUrl>/api/invoices/<orderUUID>?offline=1`. The `offline=1` marker is added only for
@@ -260,10 +260,13 @@ Order synced and payment not: payment-only push. Both synced: nothing.
 ## 8. Not in Phase 1
 Offers and coupons (online only), new logins, reports, mobile payment, resource caching, hard-delete tombstones, sync versions.
 
+Product tags: the pull feeds do not carry them yet. Offline, the kiosk finds a product by name or barcode only. A tag search works online (and in `caching` mode while the server answers), but not from the local data.
+
 
 ## Removals
 `GET /api/sync/removals?afterId=<id>&size=<n>` (device session with a store). Tables named in the list are the feed names:
-`barcodes` and `product-images` (the row id is the id you hold locally).
+`barcodes`, `product-images`, `products` and `categories` (the row id is the id you hold locally).
+Deleting a product also lists its barcodes and gallery images. A product or category is removed only when an admin deletes it for good; a deactivated one stays in the normal feed with `active=false`.
 - **Starting position:** call it with no `afterId` BEFORE the first full pull of each table. Nothing is listed; save `next.afterId`.
   Pulls are upserts, so anything removed while the full pull runs is picked up by the first normal call.
 - **Normal call:** send the saved `afterId`. Response `{items:[{id, table, rowId, removedAt}], last, next:{afterId}, resetRequired, serverTime}`.

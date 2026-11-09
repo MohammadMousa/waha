@@ -5,6 +5,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.waha.product.dto.ProductSyncItem;
 import org.springframework.jdbc.core.namedparam.NamedParameterJdbcTemplate;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.sql.ResultSet;
 import java.sql.SQLException;
@@ -114,6 +115,35 @@ public class ProductRepository {
                 );
             }
         }
+    }
+
+    // Names the places that still use the product (orders, stock, inventory, offers, coupons). Empty means unused.
+    public List<String> usedIn(long id) {
+        Map<String, String> checks = new java.util.LinkedHashMap<>();
+        checks.put("orders", "SELECT COUNT(*) FROM order_items WHERE product_id = :id");
+        checks.put("stock", "SELECT COUNT(*) FROM store_inventory WHERE product_id = :id");
+        checks.put("inventory operations", "SELECT COUNT(*) FROM inventory_operation_items WHERE product_id = :id");
+        checks.put("offers", "SELECT COUNT(*) FROM offer_products WHERE product_id = :id");
+        checks.put("coupons", "SELECT COUNT(*) FROM coupon_products WHERE product_id = :id");
+        List<String> used = new ArrayList<>();
+        for (var e : checks.entrySet()) {
+            Long n = jdbc.queryForObject(e.getValue(), Map.of("id", id), Long.class);
+            if (n != null && n > 0) used.add(e.getKey());
+        }
+        return used;
+    }
+
+    // Really deletes an unused product with its barcodes, tags and gallery rows, and records the removals for devices.
+    @Transactional
+    public void hardDelete(long id) {
+        var t = jdbc.getJdbcTemplate();
+        t.update("INSERT INTO sync_removals (organization_id, table_name, row_id) "
+            + "SELECT p.company_id, 'barcodes', b.id FROM product_barcodes b JOIN products p ON p.id = b.product_id WHERE b.product_id = ?", id);
+        t.update("INSERT INTO sync_removals (organization_id, table_name, row_id) "
+            + "SELECT p.company_id, 'product-images', i.id FROM product_images i JOIN products p ON p.id = i.product_id WHERE i.product_id = ?", id);
+        t.update("INSERT INTO sync_removals (organization_id, table_name, row_id) SELECT company_id, 'products', id FROM products WHERE id = ?", id);
+        t.update("DELETE FROM product_images WHERE product_id = ?", id);
+        t.update("DELETE FROM products WHERE id = ?", id);
     }
 
     public boolean deactivate(long id) {

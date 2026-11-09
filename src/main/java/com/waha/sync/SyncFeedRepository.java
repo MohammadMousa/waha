@@ -108,7 +108,7 @@ public class SyncFeedRepository {
     // Payment methods are global (not per organization).
     public List<Row> paymentMethods(Instant since, long afterId, int limit) {
         return jdbc.query(
-            "SELECT id, `key`, display_name, provider, available_modes, offline_capable, active, sort_order, payment_url, updated_at " +
+            "SELECT id, `key`, display_name, provider, available_modes, offline_capable, active, sort_order, payment_url, icon_resource_id, updated_at " +
             "FROM payment_methods m WHERE 1 = 1" + AFTER.formatted("m") +
             " ORDER BY m.updated_at, m.id LIMIT :limit",
             params(0, since, afterId, limit),
@@ -123,6 +123,7 @@ public class SyncFeedRepository {
                 f.put("active", rs.getBoolean("active"));
                 f.put("sortOrder", rs.getInt("sort_order"));
                 f.put("paymentUrl", rs.getString("payment_url"));
+                f.put("iconResourceId", nullableLong(rs, "icon_resource_id"));
                 return row(rs, f);
             });
     }
