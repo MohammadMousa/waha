@@ -43,7 +43,8 @@ public class MissingProductController {
 
     private static final String FROM_SQL =
         "FROM product_missing m JOIN stores s ON s.id = m.store_id "
-        + "LEFT JOIN product_barcodes pb ON pb.barcode = m.barcode "
+        // Explicit collation: the two tables can differ between databases, and MySQL refuses to mix them.
+        + "LEFT JOIN product_barcodes pb ON pb.barcode = m.barcode COLLATE utf8mb4_0900_ai_ci "
         + "LEFT JOIN products p ON p.id = pb.product_id AND p.company_id = s.organization_id ";
 
     @GetMapping
