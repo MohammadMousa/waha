@@ -29,5 +29,8 @@ public record OrderResponse(
     CouponView coupon,             // coupon used (null when none); its discount is part of discountAmount
     boolean offlinePushed,         // created and paid on a kiosk without the server, sent later
     boolean priceDiffers,          // an offline order whose prices or tax rate differed from the server's at push time
-    String orderReference          // short code the customer can quote (kiosk-made for offline orders; null for older orders)
+    String orderReference,         // short code the customer can quote (kiosk-made for offline orders; null for older orders)
+    String shippingMethod,         // PICKUP or FREE_SHIPPING for online orders; null for kiosk and shopping mode orders
+    BigDecimal shippingAmount,     // 0 while every method is free
+    com.fasterxml.jackson.databind.JsonNode shippingAddress  // copy of the delivery address at order time (null unless delivered)
 ) {}

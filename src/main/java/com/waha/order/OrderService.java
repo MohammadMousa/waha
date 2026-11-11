@@ -51,6 +51,7 @@ public class OrderService {
     private final OfferPricing offerPricing;
     private final com.waha.pricing.VatPricing vatPricing;
     private final com.waha.coupon.CouponService couponService;
+    private final com.waha.shipping.ShippingService shippingService;
 
     public OrderService(OrderRepository orderRepository, ProductRepository productRepository,
                          StoreRepository storeRepository, PaymentProvider paymentProvider,
@@ -60,7 +61,9 @@ public class OrderService {
                          com.waha.config.ConfigService configService,
                          OfferPricing offerPricing,
                          com.waha.pricing.VatPricing vatPricing,
-                         com.waha.coupon.CouponService couponService) {
+                         com.waha.coupon.CouponService couponService,
+                         com.waha.shipping.ShippingService shippingService) {
+        this.shippingService = shippingService;
         this.offerPricing = offerPricing;
         this.couponService = couponService;
         this.vatPricing = vatPricing;
@@ -148,7 +151,7 @@ public class OrderService {
 
     // Called after every scan so the Flutter cart screen shows a live,
     // server-computed total - never a total it calculated on-device.
-    public QuoteResponse quote(QuoteRequest request) {
+    public QuoteResponse quote(QuoteRequest request, Long userId, String sessionMode) {
         long storeId = requireStoreId(request.storeId());
         StoreConfig store = storeRepository.getStoreConfig(storeId);
         Totals totals = computeTotals(storeId, request.items(), store.vatRate(), resolveCoupon(request.couponCode(), storeId, request.username()));
@@ -156,7 +159,8 @@ public class OrderService {
         QuoteResponse quote = new QuoteResponse(totals.subtotal(), totals.tax(), totals.total(), totals.items(),
             totals.priced().discountAmount(), invoiceOffer(totals.priced()),
             used == null ? null : new com.waha.order.dto.CouponView(used.coupon().code(), used.coupon().name(),
-                totals.priced().couponDiscount()));
+                totals.priced().couponDiscount()),
+            shippingService.options(storeId, userId, sessionMode, request.addressId()));
         return vatPricing.forQuote(quote, storeRepository.findCompanyId(storeId), store.vatRate());
     }
 
@@ -164,13 +168,16 @@ public class OrderService {
     // customer taps "Checkout" - online or offline. Calling this twice with
     // the same id is a safe no-op, which is exactly what an offline order
     // replaying on reconnect needs.
-    public OrderResponse createOrder(CreateOrderRequest request) {
+    public OrderResponse createOrder(CreateOrderRequest request, Long userId, String sessionMode) {
         long storeId = requireStoreId(request.storeId());
         String username = requireUsername(request.username());
         StoreConfig store = storeRepository.getStoreConfig(storeId);
         // A retry of an order that already exists is not checked against the coupon again: the order is returned as it was.
         var coupon = orderRepository.orderExists(request.orderId()) ? null : resolveCoupon(request.couponCode(), storeId, username);
         Totals totals = computeTotals(storeId, request.items(), store.vatRate(), coupon);
+        // Checked like the coupon: a retry of an order that exists is returned as it was.
+        var shipping = orderRepository.orderExists(request.orderId()) ? null
+            : shippingService.choose(storeId, userId, sessionMode, request.shippingMethod(), request.addressId());
 
         boolean wasCreated = orderRepository.createOrderIdempotent(
             request.orderId(), storeId, store.currency(), store.vatRate(), username, totals.subtotal(), totals.tax()
@@ -180,6 +187,7 @@ public class OrderService {
             orderRepository.insertOrderItems(request.orderId(), totals.priced(), totals.productsById(), totals.coupon());
             long displayId = orderRepository.nextDisplayId(storeId);
             orderRepository.setDisplayId(request.orderId(), displayId);
+            if (shipping != null) orderRepository.setShipping(request.orderId(), shipping);
         }
 
         return display(orderRepository.getOrderDetail(request.orderId(), wasCreated));

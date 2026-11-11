@@ -32,9 +32,10 @@ public class OrderController {
                 sessionService.resolveStoreId(request.storeId(), authHeader),
                 request.items(),
                 request.couponCode(),
-                sessionService.resolveUsername(request.username(), authHeader)
+                sessionService.resolveUsername(request.username(), authHeader),
+                request.addressId()
             );
-            return ResponseEntity.ok(orderService.quote(resolved));
+            return ResponseEntity.ok(orderService.quote(resolved, userIdOf(authHeader), modeOf(authHeader)));
         } catch (InvalidRequestException e) {
             return ResponseEntity.status(400).body(new ErrorResponse(e.getMessage()));
         } catch (ProductNotSellableException e) {
@@ -43,6 +44,9 @@ public class OrderController {
             return totalNotPositive(e);
         } catch (com.waha.coupon.CouponException e) {
             return couponRejected(e);
+        } catch (com.waha.shipping.ShippingNotAvailableException e) {
+            return ResponseEntity.status(422).body(java.util.Map.of(
+                "error", com.waha.shipping.ShippingNotAvailableException.CODE, "message", e.getMessage()));
         }
     }
 
@@ -61,9 +65,11 @@ public class OrderController {
                 request.orderId(),
                 sessionService.resolveUsername(request.username(), authHeader),
                 request.items(),
-                request.couponCode()
+                request.couponCode(),
+                request.shippingMethod(),
+                request.addressId()
             );
-            return ResponseEntity.ok(orderService.createOrder(resolved));
+            return ResponseEntity.ok(orderService.createOrder(resolved, userIdOf(authHeader), modeOf(authHeader)));
         } catch (InvalidRequestException e) {
             return ResponseEntity.status(400).body(new ErrorResponse(e.getMessage()));
         } catch (ProductNotSellableException e) {
@@ -72,7 +78,21 @@ public class OrderController {
             return totalNotPositive(e);
         } catch (com.waha.coupon.CouponException e) {
             return couponRejected(e);
+        } catch (com.waha.shipping.ShippingNotAvailableException e) {
+            return ResponseEntity.status(422).body(java.util.Map.of(
+                "error", com.waha.shipping.ShippingNotAvailableException.CODE, "message", e.getMessage()));
         }
+    }
+
+    // The signed-in user's id for addresses; null for a guest, a device or an employee.
+    private Long userIdOf(String authHeader) {
+        return sessionService.tryResolveSession(authHeader).filter(com.waha.auth.UserSession::isUserSession)
+            .map(com.waha.auth.UserSession::userId).orElse(null);
+    }
+
+    // NORMAL, SHOPPING or KIOSK; null without a session.
+    private String modeOf(String authHeader) {
+        return sessionService.tryResolveSession(authHeader).map(com.waha.auth.UserSession::mode).orElse(null);
     }
 
     // A submitted code that cannot be used is never ignored: the customer is told why.

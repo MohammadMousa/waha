@@ -6,5 +6,6 @@ import java.util.List;
 // per store (CHILD > PARENT > GLOBAL), so quoting a cart has to know which
 // store it's for, same as checkout does.
 // username is optional; with a coupon it enables the coupon's per-user limits. couponCode is optional; without it the price is exactly the automatic offers' price.
+// addressId is optional: the saved address the customer picked for delivery (online orders), so the quote can show the shipping options.
 public record QuoteRequest(Long storeId, List<OrderItemRequest> items, String couponCode,
-                           String username) {}
+                           String username, Long addressId) {}

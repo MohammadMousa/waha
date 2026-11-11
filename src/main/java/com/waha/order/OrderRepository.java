@@ -277,6 +277,7 @@ public class OrderRepository {
             header = jdbcTemplate.queryForMap(
                 "SELECT o.display_id, o.store_id, o.status, o.subtotal_amount, o.tax_amount, o.total_amount, o.discount_amount, " +
                 "o.payment_reference, o.currency, o.tax_rate, o.username, o.created_at, o.offline_pushed, o.price_differs, o.order_reference, " +
+                "o.shipping_method, o.shipping_amount, o.shipping_address, " +
                 "(SELECT p.provider FROM payments p WHERE p.order_id = o.id AND p.outcome = 'PAID' ORDER BY p.created_at DESC LIMIT 1) AS payment_method " +
                 "FROM orders o WHERE o.id = ?",
                 orderId
@@ -346,8 +347,17 @@ public class OrderRepository {
             couponUsed.isEmpty() ? null : couponUsed.get(0),
             flag(header.get("offline_pushed")),
             flag(header.get("price_differs")),
-            (String) header.get("order_reference")
+            (String) header.get("order_reference"),
+            (String) header.get("shipping_method"),
+            (BigDecimal) header.get("shipping_amount"),
+            parseJson((String) header.get("shipping_address"))
         );
+    }
+
+    // How an online order is received. Called only for an order that was just created.
+    public void setShipping(String orderId, com.waha.shipping.ShippingChoice choice) {
+        jdbcTemplate.update("UPDATE orders SET shipping_method = ?, shipping_amount = ?, shipping_address_id = ?, shipping_address = ? WHERE id = ?",
+            choice.method(), choice.amount(), choice.addressId(), choice.addressSnapshot(), orderId);
     }
 
     // TINYINT(1) columns come back as Boolean from the driver, other widths as numbers.

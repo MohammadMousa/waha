@@ -68,7 +68,7 @@ public class VatPricing {
         if (!showWithVat(organizationId)) return q;
         List<OrderItemView> items = q.items().stream().map(l -> inclusive(l, rate)).toList();
         return new QuoteResponse(q.subtotal(), q.tax(), q.total(), items, discountOf(items), q.invoiceOffer(),
-            couponWithVat(q.coupon(), rate));
+            couponWithVat(q.coupon(), rate), q.shippingOptions());
     }
 
     // Only for what customer apps and the dashboard show. Invoices and Odoo use the stored values.
@@ -78,6 +78,7 @@ public class VatPricing {
         return new OrderResponse(o.orderId(), o.displayId(), o.storeId(), o.wasCreated(), o.status(), o.username(),
             o.subtotal(), o.tax(), o.total(), o.taxRate(), o.currency(), o.paymentReference(), o.paymentMethod(),
             o.invoiceUrl(), o.createdAt(), items, o.payments(), discountOf(items), o.invoiceOffer(),
-            couponWithVat(o.coupon(), o.taxRate()), o.offlinePushed(), o.priceDiffers(), o.orderReference());
+            couponWithVat(o.coupon(), o.taxRate()), o.offlinePushed(), o.priceDiffers(), o.orderReference(),
+            o.shippingMethod(), o.shippingAmount(), o.shippingAddress());
     }
 }

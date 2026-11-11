@@ -18,5 +18,7 @@ import java.util.List;
 // webapp login, or a guest phone number/auto-generated UUID all land here
 // as-is; which one it is gets read back out of the value's own pattern,
 // not encoded as a separate column.
+//
+// shippingMethod (PICKUP or FREE_SHIPPING) and addressId (needed for FREE_SHIPPING) are for online orders; kiosk and shopping mode leave them out.
 public record CreateOrderRequest(Long storeId, String orderId, String username, List<OrderItemRequest> items,
-                                 String couponCode) {}
+                                 String couponCode, String shippingMethod, Long addressId) {}
