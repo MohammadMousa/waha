@@ -106,9 +106,6 @@ final class InvoiceHtmlRenderer {
         // DOM position: first in flex → LEFT in LTR, RIGHT in RTL
         StringBuilder companyBlock = new StringBuilder("<div class=\"hdr-company\">");
         companyBlock.append("<div class=\"inv-title\">").append(esc(invTitle)).append("</div>");
-        if (order.orderReference() != null)
-            companyBlock.append("<div class=\"inv-ref\"><small>").append(ar ? "الطلب" : "Order").append("</small>")
-                        .append(esc(order.orderReference())).append("</div>");
         companyBlock.append("<div class=\"inv-uuid\">").append(esc(order.orderId())).append("</div>");
         if (storeName != null)
             companyBlock.append("<div class=\"company-name\">").append(esc(storeName)).append("</div>");
@@ -131,7 +128,7 @@ final class InvoiceHtmlRenderer {
             metaBlock.append("<tr><td class=\"ml\">").append(ar ? "الرقم المختصر" : "Short ID")
                      .append("</td><td class=\"mv\">#").append(order.displayId()).append("</td></tr>");
         if (order.orderReference() != null)
-            metaBlock.append("<tr><td class=\"ml\">").append(ar ? "المرجع" : "Reference")
+            metaBlock.append("<tr><td class=\"ml\">").append(ar ? "ترقيم الجهاز" : "Device ID")
                      .append("</td><td class=\"mv\">").append(esc(order.orderReference())).append("</td></tr>");
         if (info != null && info.vatNumber() != null)
             metaBlock.append("<tr><td class=\"ml\">").append(ar ? "الرقم الضريبي" : "VAT number")

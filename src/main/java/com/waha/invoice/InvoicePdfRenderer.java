@@ -130,8 +130,6 @@ final class InvoicePdfRenderer {
             // Company + title cell — uses mixed Chunk for Arabic label + Latin identifiers
             PdfPCell companyCell = cellNoBorder(cAlign);
             companyCell.addElement(para(t(invTitle, ar), fTitle, cAlign));
-            if (order.orderReference() != null)
-                companyCell.addElement(para(order.orderReference(), new Font(bfLatBold, 14, Font.NORMAL, C_DARK), cAlign));
             companyCell.addElement(para(order.orderId(), fSmallLat, cAlign));
             companyCell.addElement(new Phrase("\n", fSmall));
             if (storeName != null) {
@@ -147,9 +145,14 @@ final class InvoicePdfRenderer {
             }
             if (info != null && info.crNumber() != null) {
                 if (ar) {
-                    // Two separate right-aligned paragraphs avoids mixed-direction Chunk ordering issues
-                    companyCell.addElement(para(t("السجل التجاري:", true), fMuted, Element.ALIGN_RIGHT));
-                    companyCell.addElement(para(info.crNumber(), fMutedLat, Element.ALIGN_RIGHT));
+                    // One right-aligned line. Text is already visually ordered, so chunks go left→right:
+                    // [number] [label] → the label reads first from the right, the number follows it.
+                    Paragraph crLine = new Paragraph();
+                    crLine.add(new Chunk(info.crNumber(), fMutedLat));
+                    crLine.add(new Chunk("  ", fMuted));
+                    crLine.add(new Chunk(t("السجل التجاري:", true), fMuted));
+                    crLine.setAlignment(Element.ALIGN_RIGHT);
+                    companyCell.addElement(crLine);
                 } else {
                     companyCell.addElement(para("Commercial Registry: " + info.crNumber(), fMuted, Element.ALIGN_LEFT));
                 }
@@ -166,11 +169,11 @@ final class InvoicePdfRenderer {
             if (order.displayId() != null)
                 addMetaRow(metaTbl, ar ? "الرقم المختصر" : "Short ID", "#" + order.displayId(),        ar, fLabel, fSmallLat);
             if (order.orderReference() != null)
-                addMetaRow(metaTbl, ar ? "المرجع" : "Reference", order.orderReference(),                ar, fLabel, fSmallLat);
+                addMetaRow(metaTbl, ar ? "ترقيم الجهاز" : "Device ID", order.orderReference(),                ar, fLabel, fSmallLat);
             if (info != null && info.vatNumber() != null)
                 addMetaRow(metaTbl, ar ? "الرقم الضريبي" : "VAT number", info.vatNumber(),             ar, fLabel, fSmallLat);
             if (order.currency() != null)
-                addMetaRow(metaTbl, ar ? "عملة الفاتورة" : "Invoice currency", order.currency().toUpperCase(), ar, fLabel, fNormalLat);
+                addMetaRow(metaTbl, ar ? "عملة الفاتورة" : "Invoice currency", order.currency().toUpperCase(), ar, fLabel, ar ? fSmallLat : fNormalLat);
             metaCell.addElement(metaTbl);
 
             // QR cell
@@ -467,7 +470,7 @@ final class InvoicePdfRenderer {
                                    boolean ar, Font labelFont, Font valueFont) {
         String lShaped = ar ? t(labelTxt, true) : labelTxt;
         if (ar) {
-            metaCell(tbl, valueTxt, valueFont, Element.ALIGN_LEFT);
+            metaCell(tbl, valueTxt, valueFont, Element.ALIGN_RIGHT);   // hug the label
             metaCell(tbl, lShaped,  labelFont, Element.ALIGN_RIGHT);
         } else {
             metaCell(tbl, lShaped,  labelFont, Element.ALIGN_LEFT);
