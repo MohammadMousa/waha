@@ -37,8 +37,12 @@ public class SessionService {
     // Tokens stay valid until explicit logout, revocation or account/session invalidation (Waha Rules: Auto-login).
     private static final Instant NO_EXPIRY = Instant.parse("9999-12-31T00:00:00Z");
 
+    private final RoleCatalog roleCatalog;
+
     public SessionService(NamedParameterJdbcTemplate namedJdbc, UserRepository userRepository,
-                          RoleRepository roleRepository, com.waha.device.LastSeenTracker lastSeen) {
+                          RoleRepository roleRepository, com.waha.device.LastSeenTracker lastSeen,
+                          RoleCatalog roleCatalog) {
+        this.roleCatalog = roleCatalog;
         this.lastSeen = lastSeen;
         this.namedJdbc = namedJdbc;
         this.userRepository = userRepository;
@@ -300,17 +304,11 @@ public class SessionService {
     // Resolves permissions for an employee without a specific store context —
     // unions all roles the employee has across all branches.
     public Set<String> resolveEmployeePermissionsUnified(long employeeId) {
-        return namedJdbc.query(
-            "SELECT DISTINCT r.name FROM employee_roles er JOIN roles r ON r.id = er.role_id WHERE er.employee_id = :eid",
+        return roleCatalog.permissionsOf(namedJdbc.query(
+            "SELECT DISTINCT r.id FROM employee_roles er JOIN roles r ON r.id = er.role_id WHERE er.employee_id = :eid",
             Map.of("eid", employeeId),
-            (rs, i) -> rs.getString("name")
-        ).stream()
-         .flatMap(name -> {
-             try { return Permission.BY_ROLE.getOrDefault(Role.valueOf(name), Set.of()).stream(); }
-             catch (IllegalArgumentException e) { return java.util.stream.Stream.empty(); }
-         })
-         .map(Enum::name)
-         .collect(java.util.stream.Collectors.toSet());
+            (rs, i) -> rs.getLong(1)
+        ));
     }
 
     public void requirePermission(String authHeader, Permission permission, Long storeId) {
@@ -324,21 +322,18 @@ public class SessionService {
     // Resolves permissions for any session type (user, employee, or device).
     public Set<String> resolveSessionPermissions(UserSession session, Long storeId) {
         if (session.isEmployeeSession() && storeId != null) {
-            return namedJdbc.query(
-                "SELECT r.name FROM employee_roles er JOIN roles r ON r.id = er.role_id " +
+            return roleCatalog.permissionsOf(namedJdbc.query(
+                "SELECT r.id FROM employee_roles er JOIN roles r ON r.id = er.role_id " +
                 "WHERE er.employee_id = :eid " +
                 "AND ((er.scope_type = 'BRANCH' AND er.scope_id = :sid) " +
                 "  OR (er.scope_type = 'BRANCH_GROUP' AND er.scope_id = " +
                 "      (SELECT branch_group_id FROM stores WHERE id = :sid)))",
                 Map.of("eid", session.employeeId(), "sid", storeId),
-                (rs, i) -> rs.getString("name")
-            ).stream()
-             .flatMap(name -> { try { return Permission.BY_ROLE.getOrDefault(Role.valueOf(name), Set.of()).stream(); } catch (IllegalArgumentException e) { return java.util.stream.Stream.empty(); } })
-             .map(Enum::name)
-             .collect(java.util.stream.Collectors.toSet());
+                (rs, i) -> rs.getLong(1)
+            ));
         }
         if (session.isDeviceSession()) {
-            return Permission.BY_ROLE.getOrDefault(Role.KIOSK, Set.of())
+            return Permission.FIXED_BY_ROLE.getOrDefault(Role.KIOSK, Set.of())
                 .stream().map(Enum::name)
                 .collect(java.util.stream.Collectors.toUnmodifiableSet());
         }

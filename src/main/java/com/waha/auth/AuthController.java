@@ -93,7 +93,7 @@ public class AuthController {
         if (!roleNames.contains(Role.KIOSK.name())) return null;
         boolean hasStaffRole = roleNames.stream().anyMatch(name -> {
             try { return Role.valueOf(name).includes(Role.CASHIER); }
-            catch (IllegalArgumentException e) { return false; }
+            catch (IllegalArgumentException e) { return true; }   // a custom role is a staff role
         });
         return hasStaffRole ? null : "KIOSK";
     }

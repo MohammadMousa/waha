@@ -347,3 +347,26 @@ All errors are `{"message": "..."}`. Match on HTTP status, use `message` for dis
 | 403 | Valid session but insufficient permissions |
 | 404 | Resource not found |
 | 409 | Conflict — duplicate username, already paid, etc. |
+
+---
+
+## Custom roles (runtime-configurable permissions)
+
+The list of permissions stays in code. What each role contains is data (`role_permissions`).
+
+- **Built-in roles** (`organizationId: null`) are shared by every organization. Only a super admin edits their permissions; nobody deletes them. `SUPER_ADMIN` and `KIOSK` are fixed in code and cannot be changed. Kiosk devices always get the fixed KIOSK list, so kiosk apps are unaffected.
+- **Custom roles** belong to one organization. `MANAGE_ROLES` creates, edits and deletes them (the working organization comes from the session, or `X-Organization-Id` for a super admin). A role that is given to someone cannot be deleted (409).
+- **Assignments** need `ASSIGN_ROLES`. A person can hold several roles; permissions add up. Scope: users `COMPANY` / `BRANCH_GROUP` / `BRANCH`, employees `BRANCH_GROUP` / `BRANCH`.
+- Nobody can hand out a permission they do not hold. `MANAGE_USERS` and `MANAGE_SYSTEM` can never be put in a role. `SUPER_ADMIN`, `KIOSK` and `ORGANIZATION_OWNER` are not given through these calls.
+- Backend checks apply on every request, so a change is enforced at once. Apps only see the new permission list after a refresh or login.
+- New permissions `MANAGE_ROLES` and `ASSIGN_ROLES`: held by `ORGANIZATION_OWNER` and `SUPER_ADMIN`.
+
+| Call | Needs | Purpose |
+|------|-------|---------|
+| `GET /api/admin/permissions` | MANAGE_ROLES or ASSIGN_ROLES | every permission with a description |
+| `GET /api/admin/roles` | MANAGE_ROLES or ASSIGN_ROLES | built-in roles and the organization's custom roles, with permissions and how many assignments |
+| `POST /api/admin/roles` | MANAGE_ROLES | `{name, description?, permissions[]}` |
+| `PUT /api/admin/roles/{id}` | MANAGE_ROLES (super admin for built-in) | change name, description, permissions |
+| `DELETE /api/admin/roles/{id}` | MANAGE_ROLES | custom roles only |
+| `GET/POST /api/admin/users/{id}/roles`, `DELETE .../roles/{roleId}?scopeType=&scopeId=` | ASSIGN_ROLES | body `{roleId, scopeType, scopeId}` |
+| `GET/POST /api/admin/employees/{id}/roles`, `DELETE .../roles/{roleId}?scopeType=&scopeId=` | ASSIGN_ROLES | same, for POS employees |

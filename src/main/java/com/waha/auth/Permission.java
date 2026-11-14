@@ -32,28 +32,19 @@ public enum Permission {
     VIEW_COUPONS,       // see coupons and their redemptions — branch admin, operator and above
     MANAGE_COUPONS,     // create, change, enable, generate and delete coupons — client manager (organization owner) and above
 
-    UPLOAD_LOGS;        // upload device diagnostic logs — granted to KIOSK by default
+    UPLOAD_LOGS,        // upload device diagnostic logs — granted to KIOSK by default
 
-    // The single authoritative mapping: role → what it can do.
-    // Change a role's capabilities here — all endpoints pick it up immediately.
-    public static final Map<Role, Set<Permission>> BY_ROLE = Map.of(
-        Role.KIOSK,              Set.of(VIEW_PRODUCTS, VIEW_OWN_ORDERS, PROCESS_ORDERS, UPLOAD_LOGS),
-        Role.CASHIER,            Set.of(VIEW_PRODUCTS, VIEW_OWN_ORDERS, VIEW_ORDER_HISTORY,
-                                        VIEW_ALL_ORDERS, PROCESS_ORDERS,
-                                        VIEW_INVENTORY),
-        Role.OPERATOR,           Set.of(VIEW_PRODUCTS, EDIT_PRODUCTS, MANAGE_CATEGORIES,
-                                        VIEW_OWN_ORDERS, VIEW_ORDER_HISTORY, VIEW_ALL_ORDERS, PROCESS_ORDERS,
-                                        EDIT_RESOURCES,
-                                        VIEW_INVENTORY, PROCESS_INVENTORY, VIEW_OFFERS, VIEW_COUPONS),
-        Role.BRANCH_ADMIN,       Set.of(VIEW_PRODUCTS, EDIT_PRODUCTS, MANAGE_CATEGORIES,
-                                        VIEW_OWN_ORDERS, VIEW_ORDER_HISTORY, VIEW_ALL_ORDERS, PROCESS_ORDERS,
-                                        MANAGE_EMPLOYEES, MANAGE_DEVICES, MANAGE_STORES, EDIT_RESOURCES,
-                                        VIEW_INVENTORY, PROCESS_INVENTORY, MANAGE_INVENTORY, VIEW_OFFERS, VIEW_COUPONS),
-        Role.ORGANIZATION_OWNER, Set.of(VIEW_PRODUCTS, EDIT_PRODUCTS, MANAGE_CATEGORIES,
-                                        VIEW_OWN_ORDERS, VIEW_ORDER_HISTORY, VIEW_ALL_ORDERS, PROCESS_ORDERS,
-                                        MANAGE_EMPLOYEES, MANAGE_DEVICES, MANAGE_STORES, EDIT_RESOURCES,
-                                        VIEW_INVENTORY, PROCESS_INVENTORY, MANAGE_INVENTORY,
-                                        VIEW_OFFERS, MANAGE_OFFERS, VIEW_COUPONS, MANAGE_COUPONS),
-        Role.SUPER_ADMIN,        EnumSet.allOf(Permission.class)
+    MANAGE_ROLES,       // create, change and delete the organization's own roles — organization owner and above
+    ASSIGN_ROLES;       // give or take away roles for users and employees — organization owner and above
+
+    // Roles whose permissions are fixed in code and never read from the database:
+    // SUPER_ADMIN is everything, KIOSK is the device list the kiosk apps rely on.
+    // Every other role (built-in or custom) gets its permissions from the role_permissions table.
+    public static final Map<Role, Set<Permission>> FIXED_BY_ROLE = Map.of(
+        Role.KIOSK,       Set.of(VIEW_PRODUCTS, VIEW_OWN_ORDERS, PROCESS_ORDERS, UPLOAD_LOGS),
+        Role.SUPER_ADMIN, EnumSet.allOf(Permission.class)
     );
+
+    // These two can never sit in an editable role: they stay with the fixed SUPER_ADMIN role.
+    public static final Set<Permission> SUPER_ADMIN_ONLY = EnumSet.of(MANAGE_USERS, MANAGE_SYSTEM);
 }

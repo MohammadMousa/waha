@@ -7,8 +7,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
-import java.util.stream.Collectors;
-import java.util.stream.Stream;
 
 @Repository
 public class RoleRepository {
@@ -36,9 +34,11 @@ public class RoleRepository {
         "  OR (ur.scope_type = 'COMPANY' AND ur.scope_id = ?))";
 
     private final JdbcTemplate jdbcTemplate;
+    private final RoleCatalog roleCatalog;
 
-    public RoleRepository(JdbcTemplate jdbcTemplate) {
+    public RoleRepository(JdbcTemplate jdbcTemplate, RoleCatalog roleCatalog) {
         this.jdbcTemplate = jdbcTemplate;
+        this.roleCatalog = roleCatalog;
     }
 
     // Returns the names of all roles that cover the given store for this user.
@@ -64,38 +64,23 @@ public class RoleRepository {
     // Returns the union of permissions from all roles that cover the given store.
     // storeId=null → only SYSTEM-scope roles match (platform-only operations).
     public Set<String> resolvePermissions(long userId, Long storeId) {
-        List<String> roleNames = storeId == null
+        List<Long> roleIds = storeId == null
             ? jdbcTemplate.query(
-                "SELECT r.name FROM user_roles ur JOIN roles r ON r.id = ur.role_id " +
+                "SELECT r.id FROM user_roles ur JOIN roles r ON r.id = ur.role_id " +
                 "WHERE ur.user_id = ? AND ur.scope_type = 'SYSTEM'",
-                (rs, i) -> rs.getString("name"), userId)
-            : jdbcTemplate.query(ROLES_BY_STORE_SQL,
-                (rs, i) -> rs.getString("name"),
+                (rs, i) -> rs.getLong(1), userId)
+            : jdbcTemplate.query(ROLES_BY_STORE_SQL.replaceFirst("SELECT r.name", "SELECT r.id"),
+                (rs, i) -> rs.getLong(1),
                 userId, storeId, storeId, storeId);
-        return permissionsFromRoleNames(roleNames);
+        return roleCatalog.permissionsOf(roleIds);
     }
 
     // Returns the union of permissions from all roles that cover the given org.
     // Used for org-level operations where no specific store is in scope.
     public Set<String> resolvePermissionsForOrg(long userId, long orgId) {
-        List<String> roleNames = jdbcTemplate.query(ROLES_BY_ORG_SQL,
-            (rs, i) -> rs.getString("name"), userId, orgId);
-        return permissionsFromRoleNames(roleNames);
-    }
-
-    private Set<String> permissionsFromRoleNames(List<String> roleNames) {
-        return roleNames.stream()
-            .flatMap(name -> {
-                try {
-                    return Permission.BY_ROLE
-                        .getOrDefault(Role.valueOf(name), Set.of())
-                        .stream();
-                } catch (IllegalArgumentException e) {
-                    return Stream.empty();
-                }
-            })
-            .map(Enum::name)
-            .collect(Collectors.toSet());
+        List<Long> roleIds = jdbcTemplate.query(ROLES_BY_ORG_SQL.replaceFirst("SELECT r.name", "SELECT r.id"),
+            (rs, i) -> rs.getLong(1), userId, orgId);
+        return roleCatalog.permissionsOf(roleIds);
     }
 
     // Returns the store assigned to this user via a BRANCH-scope role row, if any.
@@ -112,7 +97,7 @@ public class RoleRepository {
 
     public void assignRole(long userId, Role role, long scopeId) {
         Long roleId = jdbcTemplate.queryForObject(
-            "SELECT id FROM roles WHERE name = ?", Long.class, role.name());
+            "SELECT id FROM roles WHERE name = ? AND organization_id IS NULL", Long.class, role.name());
         if (roleId == null) throw new IllegalStateException("Role not found: " + role);
         String scopeType = role == Role.SUPER_ADMIN ? "SYSTEM"
             : role == Role.ORGANIZATION_OWNER ? "COMPANY"
@@ -128,7 +113,7 @@ public class RoleRepository {
         long actualScopeId = (role == Role.SUPER_ADMIN) ? 0L : scopeId;
         jdbcTemplate.update(
             "DELETE ur FROM user_roles ur JOIN roles r ON ur.role_id = r.id " +
-            "WHERE ur.user_id = ? AND r.name = ? AND ur.scope_id = ?",
+            "WHERE ur.user_id = ? AND r.organization_id IS NULL AND r.name = ? AND ur.scope_id = ?",
             userId, role.name(), actualScopeId
         );
     }

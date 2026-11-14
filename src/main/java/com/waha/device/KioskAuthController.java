@@ -26,7 +26,7 @@ import java.util.stream.Collectors;
 public class KioskAuthController {
 
     // Devices have inherent KIOSK permissions — no employee_roles lookup needed.
-    private static final Set<String> KIOSK_PERMISSIONS = Permission.BY_ROLE
+    private static final Set<String> KIOSK_PERMISSIONS = Permission.FIXED_BY_ROLE
         .getOrDefault(Role.KIOSK, Set.of())
         .stream().map(Enum::name).collect(Collectors.toUnmodifiableSet());
 

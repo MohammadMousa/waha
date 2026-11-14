@@ -37,8 +37,10 @@ public class EmployeeRepository {
     private final JdbcTemplate jdbcTemplate;
     private final NamedParameterJdbcTemplate namedJdbc;
     private final SimpleJdbcInsert insert;
+    private final com.waha.auth.RoleCatalog roleCatalog;
 
-    public EmployeeRepository(JdbcTemplate jdbcTemplate, NamedParameterJdbcTemplate namedJdbc) {
+    public EmployeeRepository(JdbcTemplate jdbcTemplate, NamedParameterJdbcTemplate namedJdbc, com.waha.auth.RoleCatalog roleCatalog) {
+        this.roleCatalog = roleCatalog;
         this.jdbcTemplate = jdbcTemplate;
         this.namedJdbc = namedJdbc;
         this.insert = new SimpleJdbcInsert(jdbcTemplate)
@@ -224,27 +226,16 @@ public class EmployeeRepository {
 
     // Union of permissions from employee_roles covering the given store.
     public java.util.Set<String> resolvePermissions(long employeeId, long storeId) {
-        List<String> roleNames = namedJdbc.query(
-            "SELECT r.name FROM employee_roles er JOIN roles r ON r.id = er.role_id " +
+        List<Long> roleIds = namedJdbc.query(
+            "SELECT r.id FROM employee_roles er JOIN roles r ON r.id = er.role_id " +
             "WHERE er.employee_id = :eid " +
             "AND ((er.scope_type = 'BRANCH' AND er.scope_id = :sid) " +
             "  OR (er.scope_type = 'BRANCH_GROUP' AND er.scope_id = " +
             "      (SELECT branch_group_id FROM stores WHERE id = :sid)))",
             Map.of("eid", employeeId, "sid", storeId),
-            (rs, i) -> rs.getString("name")
+            (rs, i) -> rs.getLong(1)
         );
-        return roleNames.stream()
-            .flatMap(name -> {
-                try {
-                    return com.waha.auth.Permission.BY_ROLE
-                        .getOrDefault(com.waha.auth.Role.valueOf(name), java.util.Set.of())
-                        .stream();
-                } catch (IllegalArgumentException e) {
-                    return java.util.stream.Stream.empty();
-                }
-            })
-            .map(Enum::name)
-            .collect(java.util.stream.Collectors.toSet());
+        return roleCatalog.permissionsOf(roleIds);
     }
 
     public Optional<Long> findPrimaryStoreId(long employeeId) {
@@ -265,12 +256,15 @@ public class EmployeeRepository {
     }
 
     public void clearRoles(long employeeId) {
-        namedJdbc.update("DELETE FROM employee_roles WHERE employee_id = :id", Map.of("id", employeeId));
+        // Only the built-in roles: custom roles are given and taken away through the role assignment calls.
+        namedJdbc.update(
+            "DELETE er FROM employee_roles er JOIN roles r ON r.id = er.role_id " +
+            "WHERE er.employee_id = :id AND r.organization_id IS NULL", Map.of("id", employeeId));
     }
 
     public Long roleIdByName(String roleName) {
         List<Long> results = namedJdbc.query(
-            "SELECT id FROM roles WHERE name = :name", Map.of("name", roleName), (rs, i) -> rs.getLong(1)
+            "SELECT id FROM roles WHERE name = :name AND organization_id IS NULL", Map.of("name", roleName), (rs, i) -> rs.getLong(1)
         );
         return results.stream().findFirst().orElse(null);
     }
