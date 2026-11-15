@@ -30,7 +30,7 @@ public class DashboardController {
             @RequestParam(required = false) Long storeId) {
 
         UserSession session = sessionService.requireSession(auth);
-        sessionService.requirePermission(auth, Permission.VIEW_ALL_ORDERS, session.storeId());
+        sessionService.requirePermission(auth, Permission.VIEW_REPORTS, session.storeId());
         return ResponseEntity.ok(dashboardRepository.getKpis(session.organizationId(), storeId));
     }
 
@@ -42,7 +42,7 @@ public class DashboardController {
             @RequestParam(required = false)          Long storeId) {
 
         UserSession session = sessionService.requireSession(auth);
-        sessionService.requirePermission(auth, Permission.VIEW_ALL_ORDERS, session.storeId());
+        sessionService.requirePermission(auth, Permission.VIEW_REPORTS, session.storeId());
 
         if (!VALID_METRICS.contains(metric))
             return ResponseEntity.badRequest().body("metric must be one of: " + VALID_METRICS);
@@ -59,7 +59,7 @@ public class DashboardController {
             @RequestParam(required = false)    Long storeId) {
 
         UserSession session = sessionService.requireSession(auth);
-        sessionService.requirePermission(auth, Permission.VIEW_ALL_ORDERS, session.storeId());
+        sessionService.requirePermission(auth, Permission.VIEW_REPORTS, session.storeId());
 
         if (!VALID_PERIODS_MONTHLY.contains(period))
             return ResponseEntity.badRequest().body("period must be one of: " + VALID_PERIODS_MONTHLY);

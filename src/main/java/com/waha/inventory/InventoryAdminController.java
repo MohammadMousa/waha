@@ -115,8 +115,8 @@ public class InventoryAdminController {
     private UserSession requireAdminSession(String auth) {
         UserSession session = sessionService.requireSession(auth);
         var perms = sessionService.resolveSessionPermissions(session, 1L);
-        if (!perms.contains(Permission.VIEW_ALL_ORDERS.name())) {
-            throw new ForbiddenException("Permission denied: VIEW_ALL_ORDERS");
+        if (!perms.contains(Permission.VIEW_INVENTORY_REPORTS.name())) {
+            throw new ForbiddenException("Permission denied: VIEW_INVENTORY_REPORTS");
         }
         return session;
     }

@@ -319,6 +319,16 @@ public class SessionService {
         }
     }
 
+    // Passes when the session holds at least one of the given permissions.
+    public void requireAnyPermission(String authHeader, Long storeId, Permission... anyOf) {
+        UserSession session = requireSession(authHeader);
+        Set<String> perms = resolveSessionPermissions(session, storeId);
+        for (Permission p : anyOf) {
+            if (perms.contains(p.name())) return;
+        }
+        throw new ForbiddenException("Permission denied: " + anyOf[0].name());
+    }
+
     // Resolves permissions for any session type (user, employee, or device).
     public Set<String> resolveSessionPermissions(UserSession session, Long storeId) {
         if (session.isEmployeeSession() && storeId != null) {

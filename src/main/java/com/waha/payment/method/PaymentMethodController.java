@@ -66,7 +66,7 @@ public class PaymentMethodController {
             return ResponseEntity.status(400).body(new ErrorResponse("storeId is required"));
         }
         try {
-            sessionService.requirePermission(authHeader, Permission.MANAGE_STORES, resolvedStoreId);
+            sessionService.requirePermission(authHeader, Permission.MANAGE_PAYMENT_METHODS, resolvedStoreId);
         } catch (ForbiddenException e) {
             return ResponseEntity.status(403).body(new ErrorResponse(e.getMessage()));
         }
@@ -85,7 +85,7 @@ public class PaymentMethodController {
             return ResponseEntity.status(400).body(new ErrorResponse("storeId is required"));
         }
         try {
-            sessionService.requirePermission(authHeader, Permission.MANAGE_STORES, resolvedStoreId);
+            sessionService.requirePermission(authHeader, Permission.MANAGE_PAYMENT_METHODS, resolvedStoreId);
         } catch (ForbiddenException e) {
             return ResponseEntity.status(403).body(new ErrorResponse(e.getMessage()));
         }

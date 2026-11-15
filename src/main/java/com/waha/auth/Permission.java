@@ -18,6 +18,9 @@ public enum Permission {
     MANAGE_EMPLOYEES,   // POS staff (employees table) — branch-admin and above
     MANAGE_DEVICES,     // kiosk devices (devices table) — branch-admin and above
     MANAGE_STORES,
+    MANAGE_PAYMENT_METHODS, // turn payment methods on or off per store — was part of MANAGE_STORES
+    MANAGE_INTEGRATIONS,    // Odoo and other integrations, sync and their logs — was part of MANAGE_STORES
+    MANAGE_SETTINGS,        // receipt header, organization info and properties — was part of MANAGE_STORES
     MANAGE_SYSTEM,
 
     EDIT_RESOURCES,
@@ -25,12 +28,16 @@ public enum Permission {
     VIEW_INVENTORY,     // read stock levels, low-stock alerts, inventory history
     PROCESS_INVENTORY,  // perform cycle counts, transfers, returns, visits
     MANAGE_INVENTORY,   // configure settings, approve large transfers, full reports
+    VIEW_INVENTORY_REPORTS, // admin inventory screens: stock, transfers, returns, visits across the organization
 
     VIEW_OFFERS,        // see offers — branch admin, operator and above
     MANAGE_OFFERS,      // create, change, enable and delete offers — client manager (organization owner) and above
 
     VIEW_COUPONS,       // see coupons and their redemptions — branch admin, operator and above
     MANAGE_COUPONS,     // create, change, enable, generate and delete coupons — client manager (organization owner) and above
+
+    VIEW_REPORTS,       // dashboard, charts and the products-sales report (money figures) — was part of VIEW_ALL_ORDERS
+    EXPORT_REPORTS,     // download report data; enforced by the admin app only, the server has no export step
 
     UPLOAD_LOGS,        // upload device diagnostic logs — granted to KIOSK by default
 

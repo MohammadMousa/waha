@@ -45,16 +45,24 @@ managed via the admin app. They never appear in `employees`.
 | `VIEW_OWN_ORDERS` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `VIEW_ORDER_HISTORY` | | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `VIEW_ALL_ORDERS` | | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `VIEW_REPORTS` | | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `EXPORT_REPORTS` | | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `PROCESS_ORDERS` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `MANAGE_USERS` | | | | | | ✅ |
 | `MANAGE_EMPLOYEES` | | | | ✅ | ✅ | ✅ |
 | `MANAGE_DEVICES` | | | | ✅ | ✅ | ✅ |
 | `MANAGE_STORES` | | | | ✅ | ✅ | ✅ |
+| `MANAGE_PAYMENT_METHODS` | | | | ✅ | ✅ | ✅ |
+| `MANAGE_INTEGRATIONS` | | | | ✅ | ✅ | ✅ |
+| `MANAGE_SETTINGS` | | | | ✅ | ✅ | ✅ |
 | `MANAGE_SYSTEM` | | | | | | ✅ |
 | `EDIT_RESOURCES` | | | ✅ | ✅ | ✅ | ✅ |
 | `VIEW_INVENTORY` | | ✅ | ✅ | ✅ | ✅ | ✅ |
 | `PROCESS_INVENTORY` | | | ✅ | ✅ | ✅ | ✅ |
 | `MANAGE_INVENTORY` | | | | ✅ | ✅ | ✅ |
+| `VIEW_INVENTORY_REPORTS` | | ✅ | ✅ | ✅ | ✅ | ✅ |
+
+`VIEW_REPORTS` covers the dashboard, charts and the products-sales report; the orders list stays under `VIEW_ALL_ORDERS`. `EXPORT_REPORTS` is checked by the admin app only (the server has no export step). `VIEW_INVENTORY_REPORTS` guards the admin inventory screens (stock, transfers, returns, visits); the report filter lists accept `VIEW_ALL_ORDERS`, `VIEW_REPORTS` or `VIEW_INVENTORY_REPORTS`. `MANAGE_PAYMENT_METHODS`, `MANAGE_INTEGRATIONS` and `MANAGE_SETTINGS` were split out of `MANAGE_STORES` (V28 copies them to every role that held the old permission).
 
 Permissions are returned as a string array in every login response. Frontend
 should use this array for UI gating — don't re-derive from role name.

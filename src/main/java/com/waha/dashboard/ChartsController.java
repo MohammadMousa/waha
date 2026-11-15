@@ -35,7 +35,7 @@ public class ChartsController {
             @RequestParam(required = false) String from,
             @RequestParam(required = false) String to) {
 
-        sessionService.requirePermission(auth, Permission.VIEW_ALL_ORDERS, 1L);
+        sessionService.requirePermission(auth, Permission.VIEW_REPORTS, 1L);
 
         LocalDateTime start, end;
         try {

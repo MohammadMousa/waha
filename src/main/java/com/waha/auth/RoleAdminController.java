@@ -40,6 +40,12 @@ public class RoleAdminController {
         DESCRIPTIONS.put(Permission.MANAGE_OFFERS, "Create, change and delete offers");
         DESCRIPTIONS.put(Permission.VIEW_COUPONS, "See coupons and redemptions");
         DESCRIPTIONS.put(Permission.MANAGE_COUPONS, "Create, change and delete coupons");
+        DESCRIPTIONS.put(Permission.VIEW_INVENTORY_REPORTS, "See stock, transfers, returns and visits in the admin screens");
+        DESCRIPTIONS.put(Permission.MANAGE_PAYMENT_METHODS, "Turn payment methods on or off per store");
+        DESCRIPTIONS.put(Permission.MANAGE_INTEGRATIONS, "Manage Odoo and other integrations and their logs");
+        DESCRIPTIONS.put(Permission.MANAGE_SETTINGS, "Receipt header, organization info and properties");
+        DESCRIPTIONS.put(Permission.VIEW_REPORTS, "See the dashboard, charts and products-sales report");
+        DESCRIPTIONS.put(Permission.EXPORT_REPORTS, "Download report data (hidden by the admin app only)");
         DESCRIPTIONS.put(Permission.UPLOAD_LOGS, "Upload device diagnostic logs");
         DESCRIPTIONS.put(Permission.MANAGE_ROLES, "Create, change and delete the organization's own roles");
         DESCRIPTIONS.put(Permission.ASSIGN_ROLES, "Give or take away roles for users and employees");

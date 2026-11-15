@@ -51,7 +51,7 @@ public class OdooAdminController {
             @RequestHeader(value = "Authorization", required = false) String auth,
             @RequestParam(required = false) Long storeId) {
         try {
-            sessionService.requirePermission(auth, Permission.MANAGE_STORES, storeId);
+            sessionService.requirePermission(auth, Permission.MANAGE_INTEGRATIONS, storeId);
         } catch (UnauthorizedException e) {
             return ResponseEntity.status(401).body(new ErrorResponse(e.getMessage()));
         } catch (ForbiddenException e) {
@@ -94,7 +94,7 @@ public class OdooAdminController {
             @RequestParam(required = false) Long storeId,
             @RequestBody ConfigureRequest request) {
         try {
-            sessionService.requirePermission(auth, Permission.MANAGE_STORES, storeId);
+            sessionService.requirePermission(auth, Permission.MANAGE_INTEGRATIONS, storeId);
         } catch (UnauthorizedException e) {
             return ResponseEntity.status(401).body(new ErrorResponse(e.getMessage()));
         } catch (ForbiddenException e) {
@@ -149,7 +149,7 @@ public class OdooAdminController {
             @RequestHeader(value = "Authorization", required = false) String auth,
             @RequestParam(required = false) Long storeId) {
         try {
-            sessionService.requirePermission(auth, Permission.MANAGE_STORES, storeId);
+            sessionService.requirePermission(auth, Permission.MANAGE_INTEGRATIONS, storeId);
         } catch (UnauthorizedException e) {
             return ResponseEntity.status(401).body(new ErrorResponse(e.getMessage()));
         } catch (ForbiddenException e) {
@@ -177,7 +177,7 @@ public class OdooAdminController {
             @RequestHeader(value = "Authorization", required = false) String auth,
             @RequestParam(required = false) Long storeId) {
         try {
-            sessionService.requirePermission(auth, Permission.MANAGE_STORES, storeId);
+            sessionService.requirePermission(auth, Permission.MANAGE_INTEGRATIONS, storeId);
         } catch (UnauthorizedException e) {
             return ResponseEntity.status(401).body(new ErrorResponse(e.getMessage()));
         } catch (ForbiddenException e) {
@@ -213,7 +213,7 @@ public class OdooAdminController {
             @RequestHeader(value = "Authorization", required = false) String auth) {
         try {
             com.waha.auth.UserSession session = sessionService.requireSession(auth);
-            sessionService.requirePermissionForOrg(auth, Permission.MANAGE_STORES, session.organizationId());
+            sessionService.requirePermissionForOrg(auth, Permission.MANAGE_INTEGRATIONS, session.organizationId());
         } catch (UnauthorizedException e) {
             return ResponseEntity.status(401).body(new ErrorResponse(e.getMessage()));
         } catch (ForbiddenException e) {
@@ -243,7 +243,7 @@ public class OdooAdminController {
             @RequestParam(defaultValue = "false") boolean dryRun) {
         try {
             com.waha.auth.UserSession session = sessionService.requireSession(auth);
-            sessionService.requirePermissionForOrg(auth, Permission.MANAGE_STORES, session.organizationId());
+            sessionService.requirePermissionForOrg(auth, Permission.MANAGE_INTEGRATIONS, session.organizationId());
         } catch (UnauthorizedException e) {
             return ResponseEntity.status(401).body(new ErrorResponse(e.getMessage()));
         } catch (ForbiddenException e) {
@@ -272,7 +272,7 @@ public class OdooAdminController {
             @RequestHeader(value = "Authorization", required = false) String auth,
             @RequestParam(required = false) Long storeId) {
         try {
-            sessionService.requirePermission(auth, Permission.MANAGE_STORES, storeId);
+            sessionService.requirePermission(auth, Permission.MANAGE_INTEGRATIONS, storeId);
         } catch (UnauthorizedException e) {
             return ResponseEntity.status(401).body(new ErrorResponse(e.getMessage()));
         } catch (ForbiddenException e) {
@@ -295,7 +295,7 @@ public class OdooAdminController {
             @PathVariable long id) {
         try {
             com.waha.auth.UserSession session = sessionService.requireSession(auth);
-            sessionService.requirePermissionForOrg(auth, Permission.MANAGE_STORES, session.organizationId());
+            sessionService.requirePermissionForOrg(auth, Permission.MANAGE_INTEGRATIONS, session.organizationId());
         } catch (UnauthorizedException e) {
             return ResponseEntity.status(401).body(new ErrorResponse(e.getMessage()));
         } catch (ForbiddenException e) {
@@ -316,7 +316,7 @@ public class OdooAdminController {
             @PathVariable long id) {
         try {
             com.waha.auth.UserSession session = sessionService.requireSession(auth);
-            sessionService.requirePermissionForOrg(auth, Permission.MANAGE_STORES, session.organizationId());
+            sessionService.requirePermissionForOrg(auth, Permission.MANAGE_INTEGRATIONS, session.organizationId());
         } catch (UnauthorizedException e) {
             return ResponseEntity.status(401).body(new ErrorResponse(e.getMessage()));
         } catch (ForbiddenException e) {
@@ -340,7 +340,7 @@ public class OdooAdminController {
     private ResponseEntity<?> requireOrgAdmin(String auth) {
         try {
             com.waha.auth.UserSession session = sessionService.requireSession(auth);
-            sessionService.requirePermissionForOrg(auth, Permission.MANAGE_STORES, session.organizationId());
+            sessionService.requirePermissionForOrg(auth, Permission.MANAGE_INTEGRATIONS, session.organizationId());
             return null;
         } catch (UnauthorizedException e) {
             return ResponseEntity.status(401).body(new ErrorResponse(e.getMessage()));

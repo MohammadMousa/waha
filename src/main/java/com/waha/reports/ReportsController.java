@@ -36,21 +36,24 @@ public class ReportsController {
     @GetMapping("/stores")
     public ResponseEntity<?> stores(
             @RequestHeader(value = "Authorization", required = false) String auth) {
-        sessionService.requirePermission(auth, Permission.VIEW_ALL_ORDERS, 1L);
+        sessionService.requireAnyPermission(auth, 1L, Permission.VIEW_ALL_ORDERS,
+                Permission.VIEW_REPORTS, Permission.VIEW_INVENTORY_REPORTS);
         return ResponseEntity.ok(reportsRepository.getAllStores());
     }
 
     @GetMapping("/categories")
     public ResponseEntity<?> categories(
             @RequestHeader(value = "Authorization", required = false) String auth) {
-        sessionService.requirePermission(auth, Permission.VIEW_ALL_ORDERS, 1L);
+        sessionService.requireAnyPermission(auth, 1L, Permission.VIEW_ALL_ORDERS,
+                Permission.VIEW_REPORTS, Permission.VIEW_INVENTORY_REPORTS);
         return ResponseEntity.ok(reportsRepository.getAllCategories());
     }
 
     @GetMapping("/kiosks")
     public ResponseEntity<?> kiosks(
             @RequestHeader(value = "Authorization", required = false) String auth) {
-        sessionService.requirePermission(auth, Permission.VIEW_ALL_ORDERS, 1L);
+        sessionService.requireAnyPermission(auth, 1L, Permission.VIEW_ALL_ORDERS,
+                Permission.VIEW_REPORTS, Permission.VIEW_INVENTORY_REPORTS);
         return ResponseEntity.ok(reportsRepository.getKiosks());
     }
 
@@ -67,7 +70,8 @@ public class ReportsController {
     @GetMapping("/payment-methods")
     public ResponseEntity<?> paymentMethods(
             @RequestHeader(value = "Authorization", required = false) String auth) {
-        sessionService.requirePermission(auth, Permission.VIEW_ALL_ORDERS, 1L);
+        sessionService.requireAnyPermission(auth, 1L, Permission.VIEW_ALL_ORDERS,
+                Permission.VIEW_REPORTS, Permission.VIEW_INVENTORY_REPORTS);
         return ResponseEntity.ok(reportsRepository.getPaymentProviders());
     }
 
@@ -124,7 +128,7 @@ public class ReportsController {
             @RequestParam(defaultValue = "0")  int page,
             @RequestParam(defaultValue = "10") int size) {
 
-        sessionService.requirePermission(auth, Permission.VIEW_ALL_ORDERS, 1L);
+        sessionService.requirePermission(auth, Permission.VIEW_REPORTS, 1L);
 
         if (size < 1) size = 10;
         if (size > MAX_PAGE_SIZE) size = MAX_PAGE_SIZE;

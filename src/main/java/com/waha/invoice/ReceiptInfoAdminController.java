@@ -31,7 +31,7 @@ public class ReceiptInfoAdminController {
             @RequestParam(value = "organizationId", required = false) Long organizationId) {
 
         long orgId = resolveOrg(organizationId);
-        sessionService.requirePermissionForOrg(auth, Permission.MANAGE_STORES, orgId);
+        sessionService.requirePermissionForOrg(auth, Permission.MANAGE_SETTINGS, orgId);
 
         Optional<ReceiptInfo> info = receiptInfoRepository.findByOrganizationId(orgId);
         if (info.isEmpty()) {
@@ -47,7 +47,7 @@ public class ReceiptInfoAdminController {
             @RequestBody Map<String, Object> body) {
 
         long orgId = resolveOrg(organizationId);
-        sessionService.requirePermissionForOrg(auth, Permission.MANAGE_STORES, orgId);
+        sessionService.requirePermissionForOrg(auth, Permission.MANAGE_SETTINGS, orgId);
 
         receiptInfoRepository.upsert(orgId, body);
         return ResponseEntity.ok().build();

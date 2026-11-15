@@ -131,3 +131,19 @@ JOIN (
     SELECT 'ORGANIZATION_OWNER' AS role_name, 'ASSIGN_ROLES' AS permission
 ) p ON p.role_name = r.name
 WHERE r.organization_id IS NULL;
+
+-- New permissions split out of broader ones. Every role that holds the old permission keeps
+-- full access by receiving the new ones, so nobody gains or loses anything on upgrade.
+--   VIEW_ALL_ORDERS -> VIEW_REPORTS, EXPORT_REPORTS, VIEW_INVENTORY_REPORTS
+--   MANAGE_STORES   -> MANAGE_PAYMENT_METHODS, MANAGE_INTEGRATIONS, MANAGE_SETTINGS
+INSERT IGNORE INTO role_permissions (role_id, permission)
+SELECT rp.role_id, n.permission
+FROM role_permissions rp
+JOIN (
+    SELECT 'VIEW_ALL_ORDERS' AS old_permission, 'VIEW_REPORTS'            AS permission
+    UNION ALL SELECT 'VIEW_ALL_ORDERS', 'EXPORT_REPORTS'
+    UNION ALL SELECT 'VIEW_ALL_ORDERS', 'VIEW_INVENTORY_REPORTS'
+    UNION ALL SELECT 'MANAGE_STORES',   'MANAGE_PAYMENT_METHODS'
+    UNION ALL SELECT 'MANAGE_STORES',   'MANAGE_INTEGRATIONS'
+    UNION ALL SELECT 'MANAGE_STORES',   'MANAGE_SETTINGS'
+) n ON n.old_permission = rp.permission;

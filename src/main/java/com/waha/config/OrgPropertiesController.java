@@ -268,7 +268,7 @@ public class OrgPropertiesController {
 
     private UserSession require(String auth) {
         UserSession session = sessionService.requireSession(auth);
-        sessionService.requirePermission(auth, Permission.MANAGE_STORES, session.storeId());
+        sessionService.requirePermission(auth, Permission.MANAGE_SETTINGS, session.storeId());
         return session;
     }
 }

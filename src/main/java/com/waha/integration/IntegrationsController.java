@@ -33,7 +33,7 @@ public class IntegrationsController {
             @RequestParam(defaultValue = "20") int size) {
 
         UserSession session = sessionService.requireSession(auth);
-        sessionService.requirePermission(auth, Permission.MANAGE_STORES, session.storeId());
+        sessionService.requirePermission(auth, Permission.MANAGE_INTEGRATIONS, session.storeId());
         if (size < 1 || size > 200) size = 20;
 
         long orgId = session.organizationId();
@@ -60,7 +60,7 @@ public class IntegrationsController {
             @RequestBody DeleteLogsRequest request) {
 
         UserSession session = sessionService.requireSession(auth);
-        sessionService.requirePermission(auth, Permission.MANAGE_STORES, session.storeId());
+        sessionService.requirePermission(auth, Permission.MANAGE_INTEGRATIONS, session.storeId());
         if (request == null || request.ids() == null || request.ids().isEmpty()) {
             return ResponseEntity.badRequest().body(new com.waha.common.ErrorResponse("ids is required"));
         }
