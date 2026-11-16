@@ -15,7 +15,7 @@ final class OrganizationScope {
     // Writes that stay allowed without the header: they either do not depend on an organization or name it in the body.
     private static final List<String> WRITE_EXEMPT_PREFIXES = List.of(
         "/api/auth/", "/api/admin/system/", "/api/admin/users", "/api/organizations", "/api/config",
-        "/api/admin/organization/properties");
+        "/api/admin/organization/properties", "/api/admin/audit");
 
     // Null when the header is missing; 400 when it is not a positive whole number.
     static Long parse(String header) {

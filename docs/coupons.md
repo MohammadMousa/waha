@@ -89,4 +89,4 @@ discount excluding VAT. In the employee view a row with no `employeeId` means co
 
 ## Tables
 `coupons`, `coupon_stores`, `coupon_products`, `coupon_redemptions` (one row per order and coupon, with code and name
-snapshots and the discount given) and `coupon_audit`.
+snapshots and the discount given) and the shared audit history (`audit_log`, see `docs/audit.md`).

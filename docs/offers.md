@@ -56,7 +56,7 @@ All money is `DECIMAL(12,2)`.
 - `order_items.discount_amount` is the line's own discount plus its share of the global one;
   `order_items.tax_amount` is the line's tax. Older lines have 0 / NULL.
 - `offers.start_date` and `end_date` are dates (no time of day), matching the date pickers of the offer screens.
-- `offer_audit` keeps every admin change (create, update, enable, disable, delete) with the user and the before and after values.
+- the shared audit history (`audit_log`, see `docs/audit.md`) keeps every admin change (create, update, enable, disable, delete) with the user and the before and after values.
 - `offer_applications` has one row per applied offer per order, with a copy of the offer's name, type, mode
   and value at order time and the discount actually given. Editing or deleting an offer never changes past orders.
 

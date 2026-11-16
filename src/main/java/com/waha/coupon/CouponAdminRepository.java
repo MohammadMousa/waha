@@ -47,9 +47,12 @@ public class CouponAdminRepository {
     private final NamedParameterJdbcTemplate jdbc;
     private final ObjectMapper mapper;
 
-    public CouponAdminRepository(NamedParameterJdbcTemplate jdbc, ObjectMapper mapper) {
+    private final com.waha.audit.AuditService auditService;
+
+    public CouponAdminRepository(NamedParameterJdbcTemplate jdbc, ObjectMapper mapper, com.waha.audit.AuditService auditService) {
         this.jdbc = jdbc;
         this.mapper = mapper;
+        this.auditService = auditService;
     }
 
     private static MapSqlParameterSource times(LocalDateTime now) {
@@ -220,10 +223,12 @@ public class CouponAdminRepository {
 
     public void audit(long couponId, Long userId, String action, Object before, Object after) {
         try {
-            jdbc.update("INSERT INTO coupon_audit (coupon_id, user_id, action, before_json, after_json) VALUES (:c,:u,:a,:b,:f)",
-                new MapSqlParameterSource("c", couponId).addValue("u", userId).addValue("a", action)
-                    .addValue("b", before == null ? null : mapper.writeValueAsString(before))
-                    .addValue("f", after == null ? null : mapper.writeValueAsString(after)));
+            List<Long> org = jdbc.queryForList("SELECT organization_id FROM coupons WHERE id = :c",
+                new MapSqlParameterSource("c", couponId), Long.class);
+            auditService.write(com.waha.audit.AuditService.ORGANIZATION, org.isEmpty() ? 0 : org.get(0), "COUPON",
+                String.valueOf(couponId), userId, null, action, null,
+                before == null ? null : mapper.writeValueAsString(before),
+                after == null ? null : mapper.writeValueAsString(after), null, null);
         } catch (Exception e) {
             throw new IllegalStateException("Could not write the coupon audit record", e);
         }

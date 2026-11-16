@@ -61,6 +61,7 @@ managed via the admin app. They never appear in `employees`.
 | `PROCESS_INVENTORY` | | | ✅ | ✅ | ✅ | ✅ |
 | `MANAGE_INVENTORY` | | | | ✅ | ✅ | ✅ |
 | `VIEW_INVENTORY_REPORTS` | | ✅ | ✅ | ✅ | ✅ | ✅ |
+| `VIEW_ORGANIZATION_AUDIT` | | | | | ✅ | ✅ |
 
 `VIEW_REPORTS` covers the dashboard, charts and the products-sales report; the orders list stays under `VIEW_ALL_ORDERS`. `EXPORT_REPORTS` is checked by the admin app only (the server has no export step). `VIEW_INVENTORY_REPORTS` guards the admin inventory screens (stock, transfers, returns, visits); the report filter lists accept `VIEW_ALL_ORDERS`, `VIEW_REPORTS` or `VIEW_INVENTORY_REPORTS`. `MANAGE_PAYMENT_METHODS`, `MANAGE_INTEGRATIONS` and `MANAGE_SETTINGS` were split out of `MANAGE_STORES` (V28 copies them to every role that held the old permission).
 

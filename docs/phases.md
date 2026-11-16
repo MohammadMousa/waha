@@ -102,8 +102,7 @@ One daily job removes old rows from a fixed list of tables. The admin chooses th
 | Table | Default | Minimum |
 |-------|--------:|--------:|
 | Expired payment attempts | 30 days | 14 days |
-| System audit | 14 days | 14 days |
-| Offer audit and coupon audit | 14 days | 14 days |
+| Audit history (system, offers, coupons, roles) | 14 days | 14 days |
 | Order status history | 14 days | 14 days |
 | Integration sync queue: payload of finished rows (emptied, row kept) | 30 days | 14 days |
 | Device logs | 30 days | 14 days |

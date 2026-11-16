@@ -25,9 +25,9 @@ class CleanupSettingsTest {
 
     @Test
     void zeroTurnsOffAndLowerThanMinimumIsRefused() {
-        assertEquals("0", SystemPropertySpecs.clean("Cleanup_SystemAudit_Days", "0"));
-        assertEquals("14", SystemPropertySpecs.clean("Cleanup_SystemAudit_Days", " 14 "));
-        assertThrows(IllegalArgumentException.class, () -> SystemPropertySpecs.clean("Cleanup_SystemAudit_Days", "7"));
+        assertEquals("0", SystemPropertySpecs.clean("Cleanup_AuditLog_Days", "0"));
+        assertEquals("14", SystemPropertySpecs.clean("Cleanup_AuditLog_Days", " 14 "));
+        assertThrows(IllegalArgumentException.class, () -> SystemPropertySpecs.clean("Cleanup_AuditLog_Days", "7"));
         assertThrows(IllegalArgumentException.class, () -> SystemPropertySpecs.clean("Cleanup_SyncRemovals_Days", "29"));
         assertEquals("30", SystemPropertySpecs.clean("Cleanup_SyncRemovals_Days", "30"));
         assertThrows(IllegalArgumentException.class, () -> SystemPropertySpecs.clean("Cleanup_DeviceLogs_Days", "abc"));

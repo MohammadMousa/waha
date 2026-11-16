@@ -42,7 +42,8 @@ public enum Permission {
     UPLOAD_LOGS,        // upload device diagnostic logs — granted to KIOSK by default
 
     MANAGE_ROLES,       // create, change and delete the organization's own roles — organization owner and above
-    ASSIGN_ROLES;       // give or take away roles for users and employees — organization owner and above
+    ASSIGN_ROLES,
+    VIEW_ORGANIZATION_AUDIT; // read the organization's own audit history (offers, coupons, roles) — organization owner and above       // give or take away roles for users and employees — organization owner and above
 
     // Roles whose permissions are fixed in code and never read from the database:
     // SUPER_ADMIN is everything, KIOSK is the device list the kiosk apps rely on.

@@ -24,9 +24,12 @@ public class OfferRepository {
     private final ObjectMapper mapper;
     private final ConcurrentHashMap<Long, Cached> byStore = new ConcurrentHashMap<>();
 
-    public OfferRepository(JdbcTemplate jdbc, ObjectMapper mapper) {
+    private final com.waha.audit.AuditService auditService;
+
+    public OfferRepository(JdbcTemplate jdbc, ObjectMapper mapper, com.waha.audit.AuditService auditService) {
         this.jdbc = jdbc;
         this.mapper = mapper;
+        this.auditService = auditService;
     }
 
     // ── Pricing side ──────────────────────────────────────────────────────────
@@ -232,10 +235,11 @@ public class OfferRepository {
 
     public void audit(long offerId, Long userId, String action, Object before, Object after) {
         try {
-            jdbc.update("INSERT INTO offer_audit (offer_id, user_id, action, before_json, after_json) VALUES (?,?,?,?,?)",
-                offerId, userId, action,
+            List<Long> org = jdbc.queryForList("SELECT organization_id FROM offers WHERE id = ?", Long.class, offerId);
+            auditService.write(com.waha.audit.AuditService.ORGANIZATION, org.isEmpty() ? 0 : org.get(0), "OFFER",
+                String.valueOf(offerId), userId, null, action, null,
                 before == null ? null : mapper.writeValueAsString(before),
-                after == null ? null : mapper.writeValueAsString(after));
+                after == null ? null : mapper.writeValueAsString(after), null, null);
         } catch (Exception e) {
             throw new IllegalStateException("Could not write the offer audit record", e);
         }

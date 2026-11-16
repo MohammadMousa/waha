@@ -49,9 +49,15 @@ endpoints that do not exist yet. `api_level` lets the client check first and hid
 |   | Orders and quotes with a zero or negative total are refused (422, `ORDER_TOTAL_NOT_POSITIVE`) | kiosk, client |
 | 4 | Custom roles with editable permissions: role and assignment management for dashboard users and employees. See `docs/roles-permissions.md` | admin |
 |   | Permissions split out of broader ones: `VIEW_REPORTS`, `EXPORT_REPORTS`, `MANAGE_PAYMENT_METHODS`, `MANAGE_INTEGRATIONS`, `MANAGE_SETTINGS`, `VIEW_INVENTORY_REPORTS`. Roles that held the old permission receive them. Clients re-read permissions when this level changes | admin |
+| 6 | One shared audit history for system, offers, coupons and roles, with list and delete calls and the `VIEW_ORGANIZATION_AUDIT` permission. See `docs/audit.md`. Cleanup setting `Cleanup_AuditLog_Days` replaces the three audit settings | admin |
 | 5 | Data cleanup: days kept per table as system settings, status of each cleanup task, run now. See `docs/system-configuration.md` | admin |
 
 ## Endpoints per level
+
+### Level 6
+
+- `GET /api/admin/audit`, `DELETE /api/admin/audit/{id}`, `POST /api/admin/audit/delete`, `POST /api/admin/audit/clear`
+- Role changes are now recorded in the audit history
 
 ### Level 5
 

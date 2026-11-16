@@ -36,15 +36,9 @@ public class CleanupService {
         new Task("payment_attempts", "Payment attempts",
             "Expired card, QR and link payment attempts (never one still in progress)",
             "Cleanup_PaymentAttempts_Days", 30, 14),
-        new Task("system_audit", "System audit",
-            "Super-admin actions recorded in System Configuration",
-            "Cleanup_SystemAudit_Days", 14, 14),
-        new Task("offer_audit", "Offer audit",
-            "Who created, changed or deleted an offer, with before and after values",
-            "Cleanup_OfferAudit_Days", 14, 14),
-        new Task("coupon_audit", "Coupon audit",
-            "Who created, changed or deleted a coupon, with before and after values",
-            "Cleanup_CouponAudit_Days", 14, 14),
+        new Task("audit_log", "Audit history",
+            "Who changed what: system actions, offers, coupons and roles",
+            "Cleanup_AuditLog_Days", 14, 14),
         new Task("order_status_history", "Order status history",
             "Time line of order status changes",
             "Cleanup_OrderStatusHistory_Days", 14, 14),
@@ -137,9 +131,7 @@ public class CleanupService {
     private long countRows(Task t) {
         String sql = switch (t.key()) {
             case "payment_attempts"      -> "SELECT COUNT(*) FROM payment_attempts";
-            case "system_audit"          -> "SELECT COUNT(*) FROM system_audit";
-            case "offer_audit"           -> "SELECT COUNT(*) FROM offer_audit";
-            case "coupon_audit"          -> "SELECT COUNT(*) FROM coupon_audit";
+            case "audit_log"             -> "SELECT COUNT(*) FROM audit_log";
             case "order_status_history"  -> "SELECT COUNT(*) FROM order_status_history";
             case "sync_queue_payload"    -> "SELECT COUNT(*) FROM sync_queue WHERE entity_type = 'ORDER'";
             case "device_logs"           -> "SELECT COUNT(*) FROM resources WHERE device_id IS NOT NULL";
@@ -152,9 +144,7 @@ public class CleanupService {
     private long countEligible(Task t, int days) {
         String where = switch (t.key()) {
             case "payment_attempts"      -> "FROM payment_attempts WHERE expires_at < NOW() - INTERVAL ? DAY";
-            case "system_audit"          -> "FROM system_audit WHERE created_at < NOW() - INTERVAL ? DAY";
-            case "offer_audit"           -> "FROM offer_audit WHERE created_at < NOW() - INTERVAL ? DAY";
-            case "coupon_audit"          -> "FROM coupon_audit WHERE created_at < NOW() - INTERVAL ? DAY";
+            case "audit_log"             -> "FROM audit_log WHERE created_at < NOW() - INTERVAL ? DAY";
             case "order_status_history"  -> "FROM order_status_history WHERE changed_at < NOW() - INTERVAL ? DAY";
             case "sync_queue_payload"    -> "FROM sync_queue WHERE " + SYNC_QUEUE_FILTER;
             case "device_logs"           -> "FROM resources WHERE device_id IS NOT NULL AND created_at < NOW() - INTERVAL ? DAY";
@@ -220,9 +210,7 @@ public class CleanupService {
     private long purge(Task t, int days) {
         return switch (t.key()) {
             case "payment_attempts"     -> batched("DELETE FROM payment_attempts WHERE expires_at < NOW() - INTERVAL ? DAY LIMIT " + BATCH, days);
-            case "system_audit"         -> batched("DELETE FROM system_audit WHERE created_at < NOW() - INTERVAL ? DAY LIMIT " + BATCH, days);
-            case "offer_audit"          -> batched("DELETE FROM offer_audit WHERE created_at < NOW() - INTERVAL ? DAY LIMIT " + BATCH, days);
-            case "coupon_audit"         -> batched("DELETE FROM coupon_audit WHERE created_at < NOW() - INTERVAL ? DAY LIMIT " + BATCH, days);
+            case "audit_log"            -> batched("DELETE FROM audit_log WHERE created_at < NOW() - INTERVAL ? DAY LIMIT " + BATCH, days);
             case "order_status_history" -> batched("DELETE FROM order_status_history WHERE changed_at < NOW() - INTERVAL ? DAY LIMIT " + BATCH, days);
             // updated_at = updated_at keeps the row's own time, so the report and the age check stay unchanged.
             case "sync_queue_payload"   -> batched("UPDATE sync_queue SET payload = JSON_OBJECT(), updated_at = updated_at WHERE "

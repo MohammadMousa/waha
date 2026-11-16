@@ -46,6 +46,7 @@ public class RoleAdminController {
         DESCRIPTIONS.put(Permission.MANAGE_SETTINGS, "Receipt header, organization info and properties");
         DESCRIPTIONS.put(Permission.VIEW_REPORTS, "See the dashboard, charts and products-sales report");
         DESCRIPTIONS.put(Permission.EXPORT_REPORTS, "Download report data (hidden by the admin app only)");
+        DESCRIPTIONS.put(Permission.VIEW_ORGANIZATION_AUDIT, "See the organization's own audit history");
         DESCRIPTIONS.put(Permission.UPLOAD_LOGS, "Upload device diagnostic logs");
         DESCRIPTIONS.put(Permission.MANAGE_ROLES, "Create, change and delete the organization's own roles");
         DESCRIPTIONS.put(Permission.ASSIGN_ROLES, "Give or take away roles for users and employees");
@@ -54,11 +55,14 @@ public class RoleAdminController {
     private final SessionService sessionService;
     private final RoleCatalog roleCatalog;
     private final JdbcTemplate jdbc;
+    private final com.waha.audit.AuditService audit;
 
-    public RoleAdminController(SessionService sessionService, RoleCatalog roleCatalog, JdbcTemplate jdbc) {
+    public RoleAdminController(SessionService sessionService, RoleCatalog roleCatalog, JdbcTemplate jdbc,
+                               com.waha.audit.AuditService audit) {
         this.sessionService = sessionService;
         this.roleCatalog = roleCatalog;
         this.jdbc = jdbc;
+        this.audit = audit;
     }
 
     // ── permission list ───────────────────────────────────────────────────────
@@ -117,6 +121,7 @@ public class RoleAdminController {
         long id = jdbc.queryForObject("SELECT id FROM roles WHERE organization_id = ? AND name = ?", Long.class, org, name);
         writePermissions(id, perms);
         roleCatalog.invalidate();
+        auditRole(session, org, id, "ROLE_CREATED", name, null, snapshot(name, clip(text(body, "description")), perms), null);
         return ResponseEntity.status(201).body(toMap(roleCatalog.find(id).orElseThrow(), 0));
     }
 
@@ -155,6 +160,7 @@ public class RoleAdminController {
         Permission missing = RolePolicy.firstNotHeld(callerPerms, added);
         if (missing != null) return forbidden("You cannot give a permission you do not hold: " + missing.name());
 
+        String oldSnapshot = snapshot(role.name(), role.description(), role.permissions());
         try {
             jdbc.update("UPDATE roles SET name = ?, description = ? WHERE id = ?",
                 name, body.has("description") ? clip(text(body, "description")) : role.description(), id);
@@ -163,7 +169,10 @@ public class RoleAdminController {
         }
         if (body.has("permissions")) writePermissions(id, perms);
         roleCatalog.invalidate();
-        return ResponseEntity.ok(toMap(roleCatalog.find(id).orElseThrow(), assignmentCounts().getOrDefault(id, 0)));
+        var updated = roleCatalog.find(id).orElseThrow();
+        auditRole(session, role.builtIn() ? 0 : role.organizationId(), id, "ROLE_UPDATED", name, oldSnapshot,
+            snapshot(updated.name(), updated.description(), updated.permissions()), role.builtIn() ? "Built-in role, shared by every organization" : null);
+        return ResponseEntity.ok(toMap(updated, assignmentCounts().getOrDefault(id, 0)));
     }
 
     @DeleteMapping("/roles/{id}")
@@ -184,6 +193,8 @@ public class RoleAdminController {
             "This role is given to " + used + " assignment(s). Take it away from them first"));
         jdbc.update("DELETE FROM roles WHERE id = ?", id);   // role_permissions rows go with it
         roleCatalog.invalidate();
+        auditRole(session, role.organizationId(), id, "ROLE_DELETED", role.name(),
+            snapshot(role.name(), role.description(), role.permissions()), null, null);
         return ResponseEntity.ok().build();
     }
 
@@ -274,6 +285,8 @@ public class RoleAdminController {
             ? "INSERT IGNORE INTO user_roles (user_id, role_id, scope_type, scope_id) VALUES (?,?,?,?)"
             : "INSERT IGNORE INTO employee_roles (employee_id, role_id, scope_type, scope_id) VALUES (?,?,?,?)",
             subjectId, role.id(), scopeType, scopeId);
+        auditRole(session, targetOrg, role.id(), "ROLE_ASSIGNED", (user ? "user " : "employee ") + subjectId, null, role.name(),
+            "Scope " + scopeType + (scopeId > 0 ? " " + scopeId : ""));
         return listAssignments(auth, subjectId, user);
     }
 
@@ -290,10 +303,35 @@ public class RoleAdminController {
             ? "DELETE FROM user_roles WHERE user_id = ? AND role_id = ? AND scope_type = ? AND scope_id = ?"
             : "DELETE FROM employee_roles WHERE employee_id = ? AND role_id = ? AND scope_type = ? AND scope_id = ?",
             subjectId, roleId, scopeType.toUpperCase(), scopeId);
+        auditRole(session, targetOrg, roleId, "ROLE_UNASSIGNED", (user ? "user " : "employee ") + subjectId, found.get().name(), null,
+            "Scope " + scopeType.toUpperCase() + (scopeId > 0 ? " " + scopeId : ""));
         return listAssignments(auth, subjectId, user);
     }
 
     // ── helpers ───────────────────────────────────────────────────────────────
+
+    private static final com.fasterxml.jackson.databind.ObjectMapper JSON = new com.fasterxml.jackson.databind.ObjectMapper();
+
+    // Role content as JSON text for the audit history: name, description and sorted permission names.
+    private static String snapshot(String name, String description, java.util.Collection<Permission> perms) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("name", name);
+        m.put("description", description);
+        m.put("permissions", perms.stream().map(Enum::name).sorted().toList());
+        try {
+            return JSON.writeValueAsString(m);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException e) {
+            return null;
+        }
+    }
+
+    // organizationId 0 means a built-in role shared by every organization: recorded in the system scope.
+    private void auditRole(UserSession session, long organizationId, long roleId, String action, String target,
+                           String oldValue, String newValue, String details) {
+        audit.record(organizationId > 0 ? com.waha.audit.AuditService.ORGANIZATION : com.waha.audit.AuditService.SYSTEM,
+            Math.max(organizationId, 0), "ROLE", String.valueOf(roleId), session.userId(), null, action, target,
+            oldValue, newValue, details);
+    }
 
     private ResponseEntity<?> validateScope(String scopeType, long scopeId, long org, boolean user) {
         switch (scopeType) {

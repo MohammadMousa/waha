@@ -54,7 +54,7 @@ Reply `{ "cleared": n }`. It is deliberately not part of "Flush cache".
 
 ## System audit
 
-Only critical actions are written, so the table stays small:
+The system audit is the `SYSTEM` part of the shared audit history (see `docs/audit.md`); the three calls below keep working and only show and change system rows. Only critical actions are written, so it stays small:
 
 | action | target | When |
 |--------|--------|------|
@@ -62,7 +62,8 @@ Only critical actions are written, so the table stays small:
 | `CACHE_CLEARED` | cache name or `all` | cache cleared |
 | `CACHE_SAVED` | `last-seen` or `all` | pending last-seen data saved |
 | `LOCKOUTS_CLEARED` | - | login lockouts cleared |
-| `AUDIT_ROW_DELETED` | row id | one audit row deleted |
+| `AUDIT_ROW_DELETED` | row id | one audit row deleted (old call) |
+| `AUDIT_ROWS_DELETED` | what was deleted | audit rows deleted through the audit history calls |
 | `AUDIT_CLEARED` | `all` or `before <date>` | audit cleared (this one row is kept) |
 
 Row: `{ id, createdAt, actorUserId, actorName, action, target, oldValue, newValue, details, ip }`.
@@ -84,9 +85,7 @@ A job runs every night at 03:30 and removes old rows from a fixed list of tables
 | Task key | Setting | Default | Minimum | What it does |
 |---|---|--:|--:|---|
 | `payment_attempts` | `Cleanup_PaymentAttempts_Days` | 30 | 14 | Deletes expired attempts, never one in progress |
-| `system_audit` | `Cleanup_SystemAudit_Days` | 14 | 14 | Deletes old audit rows |
-| `offer_audit` | `Cleanup_OfferAudit_Days` | 14 | 14 | Deletes old offer change history |
-| `coupon_audit` | `Cleanup_CouponAudit_Days` | 14 | 14 | Deletes old coupon change history |
+| `audit_log` | `Cleanup_AuditLog_Days` | 14 | 14 | Deletes old audit history (system, offers, coupons, roles) |
 | `order_status_history` | `Cleanup_OrderStatusHistory_Days` | 14 | 14 | Deletes old status time line rows |
 | `sync_queue_payload` | `Cleanup_SyncQueuePayload_Days` | 30 | 14 | Empties the stored content of finished (`DONE`) order rows; the rows stay |
 | `device_logs` | `Cleanup_DeviceLogs_Days` | 30 | 14 | Deletes device logs |
