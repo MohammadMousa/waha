@@ -8,6 +8,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 @EnableScheduling
 public class WahaApplication {
     public static void main(String[] args) {
+        System.setProperty("java.awt.headless", "true");   // image work (avatars) runs on a server with no screen
         SpringApplication.run(WahaApplication.class, args);
     }
 }

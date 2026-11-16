@@ -27,6 +27,10 @@ waha:
   # phone can actually reach, not whatever host/port the container sees
   # internally.
   public-base-url: ${WAHA_PUBLIC_BASE_URL:http://localhost:8081}
+  # Key that encrypts saved secrets (the Odoo API key). Empty = secrets stay plain text. See SecretCipher.
+  secret-key: ${WAHA_SECRET_KEY:}
+  # Country code added to phone numbers typed without one (966 = Saudi Arabia).
+  default-country-code: ${WAHA_DEFAULT_COUNTRY_CODE:966}
   cors:
     # Native Flutter (Android/iOS) calls this API directly and never sends
     # CORS preflight requests at all - this setting only matters if you test

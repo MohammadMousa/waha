@@ -74,12 +74,13 @@ public class UserRepository {
 
     // ── admin CRUD ────────────────────────────────────────────────────────────
 
-    // Admin accounts carry no profile data — profile lives in employees (POS).
+    // Name, phone, email and picture come from the profile when the person has saved one (else null).
     public record UserAdminView(
         long id, String username,
         LocalDateTime createdAt,
         String roleName, Long storeId, String storeName,
-        LocalDateTime lastLoginAt
+        LocalDateTime lastLoginAt,
+        String firstName, String lastName, String phone, String email, Long avatarResourceId
     ) {}
 
     public List<UserAdminView> findAll(String roleFilter, long orgId) {
@@ -94,8 +95,10 @@ public class UserRepository {
                    (SELECT s.name FROM user_roles ur JOIN stores s ON s.id = ur.scope_id
                     WHERE ur.user_id = u.id AND ur.scope_type = 'BRANCH'
                     ORDER BY ur.scope_id DESC LIMIT 1) AS store_name,
-                   (SELECT MAX(created_at) FROM user_sessions WHERE user_id = u.id) AS last_login_at
+                   (SELECT MAX(created_at) FROM user_sessions WHERE user_id = u.id) AS last_login_at,
+                   p.first_name, p.last_name, p.phone, p.email, p.avatar_resource_id
             FROM users u
+            LEFT JOIN user_profiles p ON p.user_id = u.id
             WHERE (:role IS NULL OR EXISTS (
                       SELECT 1 FROM user_roles ur2 JOIN roles r2 ON r2.id = ur2.role_id
                       WHERE ur2.user_id = u.id AND r2.name = :role))
@@ -112,7 +115,9 @@ public class UserRepository {
                 rs.getString("role_name"),
                 rs.getObject("store_id", Long.class),
                 rs.getString("store_name"),
-                rs.getObject("last_login_at", LocalDateTime.class)
+                rs.getObject("last_login_at", LocalDateTime.class),
+                rs.getString("first_name"), rs.getString("last_name"), rs.getString("phone"), rs.getString("email"),
+                rs.getObject("avatar_resource_id", Long.class)
             )
         );
     }

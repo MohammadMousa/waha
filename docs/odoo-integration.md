@@ -21,7 +21,7 @@ https://mycompany.odoo.com  →  db = "mycompany"
 
 ### Where credentials are stored
 
-Stored in the `external_systems` table (one row, `name = 'ODOO'`). The API key is persisted as plaintext in the DB column — encrypt at the infrastructure level (KMS / secrets manager) if the threat model requires it.
+Stored in the `external_systems` table (one row, `name = 'ODOO'`). The API key is saved **encrypted** (AES-256-GCM, stored as `enc:v1:...`) when the server has `WAHA_SECRET_KEY` set in its `.env`; the key never lives in the database. Generate it once with `openssl rand -base64 32` and keep it with the `.env` backup, not the database backup. On start the server encrypts any key that was saved as plain text earlier. Without `WAHA_SECRET_KEY` the app still works and the key stays plain text (a warning is logged). If the encryption key is lost or changed, enter the Odoo API key again in the configure call; nothing else is lost. No endpoint returns the key.
 
 ### How to configure
 
@@ -68,7 +68,7 @@ One row per external system.
 | `id`                     | BIGINT PK     | |
 | `name`                   | VARCHAR(50)   | Unique. Currently only `'ODOO'`. |
 | `base_url`               | VARCHAR(500)  | Full HTTPS URL |
-| `api_key`                | VARCHAR(500)  | Odoo API key (plaintext) |
+| `api_key`                | VARCHAR(500)  | Odoo API key (encrypted, see above) |
 | `username`               | VARCHAR(255)  | Odoo login (email) |
 | `enabled`                | BOOLEAN       | Defaults to TRUE on upsert |
 | `last_category_sync_at`  | TIMESTAMP     | NULL until first category pull |

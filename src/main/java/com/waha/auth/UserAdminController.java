@@ -194,6 +194,11 @@ public class UserAdminController {
         m.put("storeId", u.storeId());
         m.put("storeName", u.storeName());
         m.put("lastLoginAt", u.lastLoginAt() != null ? u.lastLoginAt().toString() : null);
+        m.put("firstName", u.firstName());
+        m.put("lastName", u.lastName());
+        m.put("phone", u.phone());
+        m.put("email", u.email());
+        m.put("avatarResourceId", u.avatarResourceId());
         return m;
     }
 }

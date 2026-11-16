@@ -13,9 +13,11 @@ import java.util.Optional;
 public class ExternalSystemRepository {
 
     private final NamedParameterJdbcTemplate jdbc;
+    private final com.waha.security.SecretCipher cipher;
 
-    public ExternalSystemRepository(NamedParameterJdbcTemplate jdbc) {
+    public ExternalSystemRepository(NamedParameterJdbcTemplate jdbc, com.waha.security.SecretCipher cipher) {
         this.jdbc = jdbc;
+        this.cipher = cipher;
     }
 
     public Optional<ExternalSystem> findByName(String name) {
@@ -28,7 +30,7 @@ public class ExternalSystemRepository {
                 rs.getLong("id"),
                 rs.getString("name"),
                 rs.getString("base_url"),
-                rs.getString("api_key"),
+                cipher.decrypt(rs.getString("api_key")),
                 rs.getString("username"),
                 rs.getString("customer_override"),
                 rs.getString("push_target"),
@@ -48,7 +50,8 @@ public class ExternalSystemRepository {
         Map<String, Object> params = new java.util.HashMap<>();
         params.put("name",                  name);
         params.put("baseUrl",               baseUrl);
-        params.put("apiKey",                apiKey != null ? apiKey : "");
+        // Saved encrypted when the server has an encryption key; plain text otherwise (see SecretCipher).
+        params.put("apiKey",                apiKey == null ? "" : (cipher.enabled() ? cipher.encrypt(apiKey) : apiKey));
         params.put("username",              username != null ? username : "");
         params.put("customerOverride",      customerOverride);
         params.put("ownerOrganizationId",   ownerOrganizationId);
