@@ -26,6 +26,12 @@ public final class SystemPropertySpecs {
             "Products are managed centrally (read by the apps)", "true or false"));
         KNOWN.put("resource.max_size_bytes", new Spec("integer", "2097152",
             "Largest resource file that can be uploaded", "1024-104857600 bytes"));
+        // Data cleanup: days kept per task, 0 = off. See CleanupService.
+        for (var t : com.waha.cleanup.CleanupService.TASKS) {
+            KNOWN.put(t.settingKey(), new Spec("integer", String.valueOf(t.defaultDays()),
+                "Days to keep: " + t.label() + ". " + t.description() + ". 0 turns this cleanup off",
+                "0 (off) or " + t.minDays() + "-" + com.waha.cleanup.CleanupService.MAX_DAYS + " days"));
+        }
     }
 
     // Returns the cleaned value to store, or throws IllegalArgumentException with a message for the client.
@@ -51,7 +57,25 @@ public final class SystemPropertySpecs {
                 if (!l.equals("true") && !l.equals("false")) throw new IllegalArgumentException(key + " must be true or false");
                 return l;
             }
-            default -> throw new IllegalArgumentException("Unknown system setting: " + key);
+            default -> {
+                for (var t : com.waha.cleanup.CleanupService.TASKS) {
+                    if (t.settingKey().equals(key)) return daysOrOff(key, v, t.minDays());
+                }
+                throw new IllegalArgumentException("Unknown system setting: " + key);
+            }
+        }
+    }
+
+    // 0 turns the cleanup off; otherwise the number of days must be at least the task's minimum.
+    private static String daysOrOff(String key, String v, int min) {
+        try {
+            int n = Integer.parseInt(v);
+            if (n == 0) return "0";
+            if (n < min || n > com.waha.cleanup.CleanupService.MAX_DAYS) throw new NumberFormatException();
+            return String.valueOf(n);
+        } catch (NumberFormatException e) {
+            throw new IllegalArgumentException(key + " must be 0 (off) or a whole number from " + min + " to "
+                + com.waha.cleanup.CleanupService.MAX_DAYS);
         }
     }
 

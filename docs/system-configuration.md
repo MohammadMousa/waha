@@ -75,6 +75,32 @@ Row: `{ id, createdAt, actorUserId, actorName, action, target, oldValue, newValu
 
 Writing an audit row never fails the action it records.
 
+## Data cleanup
+
+A job runs every night at 03:30 and removes old rows from a fixed list of tables. Each task has a system setting
+`Cleanup_<Name>_Days` (0 turns it off; otherwise at least the task minimum, at most 3650). The settings appear in
+`GET /api/admin/system/properties` like every other system setting.
+
+| Task key | Setting | Default | Minimum | What it does |
+|---|---|--:|--:|---|
+| `payment_attempts` | `Cleanup_PaymentAttempts_Days` | 30 | 14 | Deletes expired attempts, never one in progress |
+| `system_audit` | `Cleanup_SystemAudit_Days` | 14 | 14 | Deletes old audit rows |
+| `offer_audit` | `Cleanup_OfferAudit_Days` | 14 | 14 | Deletes old offer change history |
+| `coupon_audit` | `Cleanup_CouponAudit_Days` | 14 | 14 | Deletes old coupon change history |
+| `order_status_history` | `Cleanup_OrderStatusHistory_Days` | 14 | 14 | Deletes old status time line rows |
+| `sync_queue_payload` | `Cleanup_SyncQueuePayload_Days` | 30 | 14 | Empties the stored content of finished (`DONE`) order rows; the rows stay |
+| `device_logs` | `Cleanup_DeviceLogs_Days` | 30 | 14 | Deletes device logs |
+| `sync_removals` | `Cleanup_SyncRemovals_Days` | 180 | 30 | Deletes old removals; keep longer than any device stays offline |
+
+- `GET /api/admin/system/cleanup` returns, per task: `key`, `label`, `description`, `setting`, `days`, `enabled`, `defaultDays`,
+  `minDays`, `rows`, `eligible` (rows a run would remove now), `lastRunAt`, `lastRemoved`, `lastSource` (`SCHEDULED` or `MANUAL`), `lastError`.
+- `POST /api/admin/system/cleanup/run` with `{"table": "<task key>"}` runs one task now (400 when it is off, 409 when a run is
+  already in progress); with no body it runs every task that is on. Returns `items` (`key`, `days`, `removed`, `skipped`, `error`) and
+  `removed`. Each call is recorded in the system audit as `CLEANUP_RUN`.
+- Never cleaned: orders, order items, payments, coupon redemptions and offer applications.
+- **Never delete rows of the integration queue (`sync_queue`).** The orders report shows "synced" from finished order rows. The
+  cleanup only empties their content, and never touches `PENDING` or `FAILED` rows, so a failed row keeps its error.
+
 ## Working inside an organization (super-admin)
 
 A super-admin has organization 0, so organization-scoped screens (dashboard, orders, products, reports, stores, employees,

@@ -1,6 +1,6 @@
 # Project Phases
 
-_Last updated: 2026-08-26_
+_Last updated: 2026-11-16_
 
 ---
 
@@ -9,18 +9,19 @@ _Last updated: 2026-08-26_
 | Item | Status |
 |------|--------|
 | Spring Boot backend (JDBC, no JPA) | ✅ Done |
-| MySQL schema + Flyway migrations (V1–V21) | ✅ Done |
-| Product catalog, categories | ✅ Done |
+| MySQL schema + Flyway migrations (V1–V28) | ✅ Done |
+| Product catalog, categories, barcodes, pictures | ✅ Done |
 | Order lifecycle (CREATED → PAID / CANCELLED) | ✅ Done |
 | Idempotent order creation (stored proc) | ✅ Done |
-| Guest + registered auth (Bearer token) | ✅ Done |
-| Roles & permissions (ROLE_USER, STORE_ADMIN, SUPER_ADMIN) | ✅ Done |
-| Store config, per-store payment method overrides | ✅ Done |
+| Guest + registered auth (Bearer token), employees and kiosk devices | ✅ Done |
+| Roles & permissions: built-in roles, custom roles per organization, assignment to users and employees | ✅ Done |
+| Organizations, branch groups, stores, per-store payment method overrides | ✅ Done |
+| VAT-inclusive pricing | ✅ Done |
+| Invoices (HTML and PDF, Arabic and English) | ✅ Done |
 | Flutter app — Normal mode (scan, cart, checkout, invoice) | ✅ Done |
 | Flutter app — Shopping mode (customer's phone) | ✅ Done |
 | Flutter app — Kiosk mode (locked nav, idle guard) | ✅ Done |
 | Bilingual UI (AR / EN, RTL support) | ✅ Done |
-| Odoo integration (product + order sync) | ✅ Done |
 
 ---
 
@@ -41,35 +42,105 @@ _Last updated: 2026-08-26_
 | Invoice screen: Due amount + order number split | ✅ Done |
 | Language toggle for kiosk / shopping modes | ✅ Done |
 | App title dynamic from `system_properties.appName` | ✅ Done |
+| Orders can be paid in several transactions (payments are stored per transaction) | ✅ Done |
 
 ---
 
-## Phase 3 — Terminal / Card-Present 🔲 Planned
+## Phase 3 — Terminal / Card-Present ✅ Complete
 
 | Item | Status |
 |------|--------|
-| Hardware selection (POS terminal / Stripe Terminal reader) | 🔲 Pending hardware decision |
-| `TERMINAL` provider implementation (Python daemon or SDK) | 🔲 Not started |
-| `PaymentProvider` interface already in place | ✅ Interface ready |
-| Flutter terminal payment UI | 🔲 Not started |
+| Hardware selected: USB card terminal | ✅ Done |
+| `TERMINAL` provider and terminal sessions | ✅ Done |
+| Flutter terminal payment UI | ✅ Done |
+| Late approval for a payment approved after the kiosk gave up | ✅ Done |
 
 ---
 
-## Advanced Phases (Backlog)
+## Phase 4 — Offline & Sync ✅ Complete
+
+| Item | Status |
+|------|--------|
+| Offline mode: data sync to the kiosk and order push back | ✅ Done |
+| Removals feed (deleted rows reach the kiosk) | ✅ Done |
+| Sync staggering, intervals and local cleanup settings | ✅ Done |
+| Caching mode and payment-only sync | ✅ Done |
+| Offline invoice marker and device order reference | ✅ Done |
+| Global payment switch and richer offline data | ✅ Done |
+
+---
+
+## Phase 5 — Commerce ✅ Complete
+
+| Item | Status |
+|------|--------|
+| Offers (auto-applied promotions, discounts on orders and invoices) | ✅ Done |
+| Coupons (generation, redemptions, sales report) | ✅ Done |
+| Customer addresses and shipping options for online orders | ✅ Done |
+| Zero or negative total orders refused | ✅ Done |
+
+---
+
+## Phase 6 — Back Office ✅ Complete
+
+| Item | Status |
+|------|--------|
+| Admin dashboard: KPIs, charts, orders and product-sales reports | ✅ Done |
+| Inventory: visits, transfers, returns, stock (with its own reports permission) | ✅ Done |
+| Device status, device sessions and device logs | ✅ Done |
+| Missing products report and cleanup | ✅ Done |
+| Account sessions: list, disconnect, session cap | ✅ Done |
+| System configuration for super admin, with its audit | ✅ Done |
+| Product sheet import / export | ✅ Done |
+| Deploy and rollback scripts | ✅ Done |
+| Data cleanup: configurable days per table (see below) | ✅ Done |
+
+### Data cleanup
+
+One daily job removes old rows from a fixed list of tables. The admin chooses the number of days per table in System Configuration; 0 turns it off for that table.
+
+| Table | Default | Minimum |
+|-------|--------:|--------:|
+| Expired payment attempts | 30 days | 14 days |
+| System audit | 14 days | 14 days |
+| Offer audit and coupon audit | 14 days | 14 days |
+| Order status history | 14 days | 14 days |
+| Integration sync queue: payload of finished rows (emptied, row kept) | 30 days | 14 days |
+| Device logs | 30 days | 14 days |
+| Sync removals | 180 days | 30 days |
+
+- Orders, order items, payments, coupon redemptions and offer applications are never removed.
+- **Integration sync queue: never delete its rows.** The orders report decides "synced" from the finished order rows in this table, so deleting them would show old orders as not synced. The cleanup only empties the stored content of finished rows and keeps the row itself.
+- Rows that are still pending or failed are never touched, however old. A failed row keeps its error until someone removes it by hand.
+- Catalog pulls (about one row a day) are not cleaned; remove them by hand if wanted.
+- Payment attempts: only expired ones are removed, never one in progress. Old unpaid orders may then show an empty payment type in the orders report.
+- Sync removals keep a higher minimum: a kiosk offline for longer than that would never learn about removed items.
+- Deletes run in small batches, and each run logs how many rows it removed.
+- The admin screen shows each table with its row count, days, last run and rows removed, plus a "run now" button.
+
+---
+
+## Phase 7 — Integrations ✅ Complete
+
+| Item | Status |
+|------|--------|
+| Odoo product and category import | ✅ Done |
+| Odoo order sync | ✅ Done |
+| Odoo POS push (branches and payment methods linked to Odoo) | ✅ Done |
+| Integration logs in the admin | ✅ Done |
+
+---
+
+## If needed
 
 | Item | Notes |
 |------|-------|
-| Partial payment tracking | `paid_amount` column on orders; Due = total − paid. Deferred — current model is all-or-nothing. |
-| Weekly `payment_attempts` cleanup job | Scheduled job to delete expired rows older than 7 days |
-| Product image management | Upload + serve product images |
-| Customer-facing order history | Already seeded (orders screen); needs polish |
-| Push notifications | Payment confirmed, order ready |
-| Inventory / stock management | Out-of-scope for MVP |
-| Multi-currency per order | Currently single currency per store |
+| Push notifications | Not needed for payments (the kiosk and invoice update on their own). Only if another use appears. |
+| Customer-facing order history polish | The orders screen exists; polish only if the client app becomes a priority. |
 
 ---
 
 ## Notes
 
-- Hardware for Phase 3 (card reader) is not yet selected — the `PaymentProvider` interface is shaped for synchronous card-present attempts, ready to plug in.
-- Partial payment support requires a DB schema change (`paid_amount` on `orders`, modify `sp_mark_order_paid`). Tracked in `advanced_phases.md` memory.
+- Currency stays single per store and organization, because Odoo needs one currency per company.
+- Nothing is planned; the "If needed" items are optional.

@@ -36,10 +36,12 @@ public class SystemAdminController {
     private final OdooOrderSyncService odooSync;
     private final PinLockoutService lockoutService;
     private final SystemAuditService audit;
+    private final com.waha.cleanup.CleanupService cleanup;
 
     public SystemAdminController(SessionService sessionService, UserRepository userRepository, ConfigService configService,
                                  OfferRepository offerRepository, LastSeenTracker lastSeen, OdooOrderSyncService odooSync,
-                                 PinLockoutService lockoutService, SystemAuditService audit) {
+                                 PinLockoutService lockoutService, SystemAuditService audit,
+                                 com.waha.cleanup.CleanupService cleanup) {
         this.sessionService = sessionService;
         this.userRepository = userRepository;
         this.configService = configService;
@@ -48,6 +50,7 @@ public class SystemAdminController {
         this.odooSync = odooSync;
         this.lockoutService = lockoutService;
         this.audit = audit;
+        this.cleanup = cleanup;
     }
 
     private UserSession requireSuperAdmin(String auth) {
@@ -264,6 +267,50 @@ public class SystemAdminController {
         int n = audit.clear(before);
         record(session, req, "AUDIT_CLEARED", before == null ? "all" : "before " + before, null, null, n + " row(s) deleted");
         return ResponseEntity.ok(Map.of("deleted", n));
+    }
+
+    // ── data cleanup ──────────────────────────────────────────────────────────
+
+    // Each task with its days setting (0 = off), row counts, how many rows would go now, and its last run.
+    @GetMapping("/cleanup")
+    public ResponseEntity<?> cleanupStatus(@RequestHeader(value = "Authorization", required = false) String auth) {
+        requireSuperAdmin(auth);
+        return ResponseEntity.ok(Map.of("items", cleanup.status()));
+    }
+
+    // Body: { "table": "payment_attempts" } runs one task now; no body or no table runs every task that is on.
+    @PostMapping("/cleanup/run")
+    public ResponseEntity<?> cleanupRun(@RequestHeader(value = "Authorization", required = false) String auth,
+                                        @RequestBody(required = false) Map<String, String> body, HttpServletRequest req) {
+        UserSession session = requireSuperAdmin(auth);
+        String key = body == null ? null : body.get("table");
+        List<com.waha.cleanup.CleanupService.Result> results;
+        if (key == null || key.isBlank()) {
+            results = cleanup.runAll("MANUAL");
+            if (results.isEmpty())
+                return ResponseEntity.status(409).body(new ErrorResponse("A cleanup is already running"));
+        } else {
+            var task = com.waha.cleanup.CleanupService.task(key.trim());
+            if (task == null) return ResponseEntity.badRequest().body(new ErrorResponse("Unknown cleanup table: " + key));
+            if (cleanup.daysFor(task) == 0)
+                return ResponseEntity.badRequest().body(new ErrorResponse("This cleanup is turned off (days is 0)"));
+            var r = cleanup.runOne(task, "MANUAL");
+            if (r == null) return ResponseEntity.status(409).body(new ErrorResponse("A cleanup is already running"));
+            results = List.of(r);
+        }
+        long total = results.stream().mapToLong(com.waha.cleanup.CleanupService.Result::removed).sum();
+        record(session, req, "CLEANUP_RUN", key == null || key.isBlank() ? "all" : key.trim(), null, null, total + " row(s) cleaned");
+        List<Map<String, Object>> items = new ArrayList<>();
+        for (var r : results) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("key", r.key());
+            m.put("days", r.days());
+            m.put("removed", r.removed());
+            m.put("skipped", r.skipped());
+            m.put("error", r.error());
+            items.add(m);
+        }
+        return ResponseEntity.ok(Map.of("items", items, "removed", total));
     }
 
     private static LocalDate date(String s) {

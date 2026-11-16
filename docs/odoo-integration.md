@@ -104,6 +104,8 @@ Outbound async work items. Orders are enqueued here immediately after payment; a
 | `last_error`  | TEXT        | Last error message from Odoo or the HTTP call |
 | `store_id`    | BIGINT NULL | Store that originated the order |
 
+> **Do not delete finished rows from this table.** The orders report shows an order as "synced" only while a finished row (`DONE`) for it exists here. Deleting those rows makes old orders look not synced. To save space, only the `payload` of finished rows may be emptied (planned cleanup, see `docs/phases.md`). Rows that are `PENDING` or `FAILED` are never cleaned, so a failed row keeps its `last_error` until someone removes it by hand.
+
 ---
 
 ## Catalog sync
