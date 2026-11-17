@@ -26,7 +26,7 @@ endpoints that do not exist yet. `api_level` lets the client check first and hid
 
 ## Rules for the backend
 
-1. Raise `ApiLevel.CURRENT` by 1 in any release that adds an endpoint or behaviour a client depends on.
+1. Raise `ApiLevel.CURRENT` by 1 per deployment, not per change: the level is one above the last deployed backend. Work added before that deployment goes into the same level.
 2. Add a row to the table below in the same commit.
 3. Never lower it, and never remove or change the meaning of an existing endpoint without a new level.
 4. Deploying order stays: backend first, then the dashboard / kiosk.
@@ -49,25 +49,23 @@ endpoints that do not exist yet. `api_level` lets the client check first and hid
 |   | Orders and quotes with a zero or negative total are refused (422, `ORDER_TOTAL_NOT_POSITIVE`) | kiosk, client |
 | 4 | Custom roles with editable permissions: role and assignment management for dashboard users and employees. See `docs/roles-permissions.md` | admin |
 |   | Permissions split out of broader ones: `VIEW_REPORTS`, `EXPORT_REPORTS`, `MANAGE_PAYMENT_METHODS`, `MANAGE_INTEGRATIONS`, `MANAGE_SETTINGS`, `VIEW_INVENTORY_REPORTS`. Roles that held the old permission receive them. Clients re-read permissions when this level changes | admin |
-| 7 | Customer profile: first and last name, phone, email, gender, birth date, language. See `docs/customer-profile.md` | client, admin |
-| 6 | One shared audit history for system, offers, coupons and roles, with list and delete calls and the `VIEW_ORGANIZATION_AUDIT` permission. See `docs/audit.md`. Cleanup setting `Cleanup_AuditLog_Days` replaces the three audit settings | admin |
 | 5 | Data cleanup: days kept per table as system settings, status of each cleanup task, run now. See `docs/system-configuration.md` | admin |
+|   | One shared audit history for system, offers, coupons and roles, with list and delete calls and the `VIEW_ORGANIZATION_AUDIT` permission. See `docs/audit.md`. Cleanup setting `Cleanup_AuditLog_Days` replaces the three audit settings | admin |
+|   | Customer profile: first and last name, phone, email, gender, birth date, language. See `docs/customer-profile.md` | client, admin |
+|   | Inventory wastes: record, list with totals, export. See `docs/inventory-wastes.md`. Admin product list with search and filters; barcode search in the product lookup | admin |
 
 ## Endpoints per level
-
-### Level 7
-
-- `GET /api/profile`, `PUT /api/profile` (signed-in user)
-
-### Level 6
-
-- `GET /api/admin/audit`, `DELETE /api/admin/audit/{id}`, `POST /api/admin/audit/delete`, `POST /api/admin/audit/clear`
-- Role changes are now recorded in the audit history
 
 ### Level 5
 
 - `GET /api/admin/system/cleanup`, `POST /api/admin/system/cleanup/run` (super admin)
 - Eight new system settings `Cleanup_*_Days` (listed by `GET /api/admin/system/properties`)
+- `GET /api/admin/audit`, `DELETE /api/admin/audit/{id}`, `POST /api/admin/audit/delete`, `POST /api/admin/audit/clear`
+- Role changes are now recorded in the audit history
+- `GET /api/profile`, `PUT /api/profile` (signed-in user)
+- `GET /api/admin/inventory/wastes`, `GET /api/admin/inventory/wastes/{id}`, `POST /api/admin/inventory/wastes`, `GET /api/admin/inventory/wastes/reasons`, `GET /api/admin/inventory/wastes/export`
+- `GET /api/admin/products` (all products of the organization; `search` by name or barcode, `categoryId`, `active`, `publicListed`, `tag`, `page`, `size`; answer has `totalCount`). Needs `VIEW_PRODUCTS`. `GET /api/products` for apps and kiosks is unchanged
+- `GET /api/admin/reports/products?search=` now also matches barcodes and rows carry `barcode`
 
 ### Level 4
 

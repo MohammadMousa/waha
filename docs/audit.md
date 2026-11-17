@@ -9,7 +9,7 @@ One table (`audit_log`) records who changed what. It replaces the old `system_au
 | `SYSTEM` | Super-admin actions: settings, caches, lockouts, audit deletes, cleanup runs, changes to built-in roles | Super admin only |
 | `ORGANIZATION` | Inside one organization: offers, coupons, roles and role assignments | Super admin, and the organization's own owner or anyone holding `VIEW_ORGANIZATION_AUDIT` |
 
-Entity types: `SYSTEM`, `OFFER`, `COUPON`, `ROLE`, `USER`.
+Entity types: `SYSTEM`, `OFFER`, `COUPON`, `ROLE`, `USER`, `WASTE`.
 
 Row: `{ id, createdAt, scope, organizationId, entityType, entityId, actorUserId, actorName, action, target, oldValue, newValue, details, ip }`.
 For offers, coupons and roles `oldValue` and `newValue` hold the before and after content as JSON text.
@@ -33,6 +33,7 @@ Listing:
 | Entity | Actions |
 |--------|---------|
 | Offer, coupon | `CREATE`, `UPDATE`, `ENABLE`, `DISABLE`, `DELETE` |
+| Waste | `WASTE_CREATED` (entity id = waste id, target = `#id`) |
 | User profile | `PROFILE_UPDATED`, `AVATAR_UPDATED`, `AVATAR_REMOVED` (entity type `USER`; by an admin, field names only) |
 | Role | `ROLE_CREATED`, `ROLE_UPDATED`, `ROLE_DELETED`, `ROLE_ASSIGNED`, `ROLE_UNASSIGNED` |
 | System | see `docs/system-configuration.md` |

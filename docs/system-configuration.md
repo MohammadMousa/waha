@@ -96,7 +96,7 @@ A job runs every night at 03:30 and removes old rows from a fixed list of tables
 - `POST /api/admin/system/cleanup/run` with `{"table": "<task key>"}` runs one task now (400 when it is off, 409 when a run is
   already in progress); with no body it runs every task that is on. Returns `items` (`key`, `days`, `removed`, `skipped`, `error`) and
   `removed`. Each call is recorded in the system audit as `CLEANUP_RUN`.
-- Never cleaned: orders, order items, payments, coupon redemptions and offer applications.
+- Never cleaned: orders, order items, payments, coupon redemptions, offer applications and inventory wastes.
 - **Never delete rows of the integration queue (`sync_queue`).** The orders report shows "synced" from finished order rows. The
   cleanup only empties their content, and never touches `PENDING` or `FAILED` rows, so a failed row keeps its error.
 

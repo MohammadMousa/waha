@@ -46,6 +46,7 @@ Three operations write to `store_inventory`:
 | Transfer (visit completed) | Origin store `–qty`, target store `+qty` |
 | Return (visit completed) | Target store `–qty`, origin store `+qty` |
 | Paid sale (`OrderPaidEvent`) | Store `–qty` per order item |
+| Waste recorded | Store `–qty` per waste line (see `docs/inventory-wastes.md`) |
 
 All writes use `INSERT … ON DUPLICATE KEY UPDATE quantity = quantity + delta`, which is atomic and handles first-write (no existing row) cleanly.
 

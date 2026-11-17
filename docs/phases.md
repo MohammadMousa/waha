@@ -9,7 +9,7 @@ _Last updated: 2026-11-16_
 | Item | Status |
 |------|--------|
 | Spring Boot backend (JDBC, no JPA) | ✅ Done |
-| MySQL schema + Flyway migrations (V1–V28) | ✅ Done |
+| MySQL schema + Flyway migrations (V1–V29) | ✅ Done |
 | Product catalog, categories, barcodes, pictures | ✅ Done |
 | Order lifecycle (CREATED → PAID / CANCELLED) | ✅ Done |
 | Idempotent order creation (stored proc) | ✅ Done |
@@ -87,6 +87,7 @@ _Last updated: 2026-11-16_
 |------|--------|
 | Admin dashboard: KPIs, charts, orders and product-sales reports | ✅ Done |
 | Inventory: visits, transfers, returns, stock (with its own reports permission) | ✅ Done |
+| Inventory wastes: record, list with totals, export (import through the dashboard) | ✅ Done |
 | Device status, device sessions and device logs | ✅ Done |
 | Missing products report and cleanup | ✅ Done |
 | Account sessions: list, disconnect, session cap | ✅ Done |
@@ -108,7 +109,7 @@ One daily job removes old rows from a fixed list of tables. The admin chooses th
 | Device logs | 30 days | 14 days |
 | Sync removals | 180 days | 30 days |
 
-- Orders, order items, payments, coupon redemptions and offer applications are never removed.
+- Orders, order items, payments, coupon redemptions, offer applications and inventory wastes are never removed.
 - **Integration sync queue: never delete its rows.** The orders report decides "synced" from the finished order rows in this table, so deleting them would show old orders as not synced. The cleanup only empties the stored content of finished rows and keeps the row itself.
 - Rows that are still pending or failed are never touched, however old. A failed row keeps its error until someone removes it by hand.
 - Catalog pulls (about one row a day) are not cleaned; remove them by hand if wanted.

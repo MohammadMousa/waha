@@ -352,23 +352,69 @@ public class ProductRepository {
     }
 
     public List<Map<String, Object>> adminLookup(long companyId, String search, Long categoryId, Boolean active) {
+        boolean searching = search != null && !search.isBlank();
+        // The row shows the barcode that was typed or scanned when it is one of the product's own, else the primary one.
         StringBuilder sql = new StringBuilder(
-            "SELECT id, name FROM products WHERE company_id = :companyId");
+            "SELECT p.id, p.name, COALESCE(mb.barcode, p.barcode) AS barcode FROM products p "
+            + "LEFT JOIN product_barcodes mb ON mb.product_id = p.id AND mb.barcode = :exact "
+            + "WHERE p.company_id = :companyId");
         org.springframework.jdbc.core.namedparam.MapSqlParameterSource p =
-            new org.springframework.jdbc.core.namedparam.MapSqlParameterSource("companyId", companyId);
-        if (search != null && !search.isBlank()) {
-            sql.append(" AND name LIKE :search");
+            new org.springframework.jdbc.core.namedparam.MapSqlParameterSource("companyId", companyId)
+                .addValue("exact", searching ? search.trim() : "");
+        if (searching) {
+            sql.append(" AND (p.name LIKE :search OR p.barcode LIKE :prefix OR EXISTS "
+                + "(SELECT 1 FROM product_barcodes b WHERE b.product_id = p.id AND b.barcode LIKE :prefix))");
             p.addValue("search", "%" + search.trim() + "%");
+            p.addValue("prefix", search.trim().replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%");
         }
         if (categoryId != null) {
-            sql.append(" AND category_id = :categoryId");
+            sql.append(" AND p.category_id = :categoryId");
             p.addValue("categoryId", categoryId);
         }
         if (active != null) {
-            sql.append(" AND active = :active");
+            sql.append(" AND p.active = :active");
             p.addValue("active", active);
         }
-        sql.append(" ORDER BY name LIMIT 100");
+        sql.append(searching ? " ORDER BY (p.barcode = :exact OR mb.id IS NOT NULL) DESC, p.name LIMIT 100"
+                             : " ORDER BY p.name LIMIT 100");
         return jdbc.queryForList(sql.toString(), p);
+    }
+
+    public record AdminPage(List<Product> products, long totalCount) {}
+
+    // Admin list: every product of the organization (active or not, public or not). search matches the name (any
+    // language) or a barcode; exact barcode first, then barcode starts-with, then name contains, then by name.
+    public AdminPage adminList(long companyId, String search, Long categoryId, Boolean active, Boolean publicListed,
+                               String tag, int page, int size) {
+        StringBuilder where = new StringBuilder(" WHERE p.company_id = :companyId");
+        Map<String, Object> params = new java.util.HashMap<>();
+        params.put("companyId", companyId);
+        boolean searching = search != null && !search.isBlank();
+        String rank = "";
+        if (searching) {
+            String q = search.trim();
+            params.put("exact", q);
+            params.put("prefix", q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%");
+            params.put("contains", "%" + q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%");
+            where.append(" AND (p.barcode LIKE :prefix OR p.name->>'$.en' LIKE :contains OR p.name->>'$.ar' LIKE :contains"
+                + " OR EXISTS (SELECT 1 FROM product_barcodes b WHERE b.product_id = p.id AND b.barcode LIKE :prefix))");
+            rank = "CASE WHEN p.barcode = :exact OR EXISTS (SELECT 1 FROM product_barcodes b WHERE b.product_id = p.id AND b.barcode = :exact) THEN 0 "
+                + "WHEN p.barcode LIKE :prefix OR EXISTS (SELECT 1 FROM product_barcodes b WHERE b.product_id = p.id AND b.barcode LIKE :prefix) THEN 1 ELSE 2 END, ";
+        }
+        if (categoryId != null) { where.append(" AND p.category_id = :categoryId"); params.put("categoryId", categoryId); }
+        if (active != null) { where.append(" AND p.active = :active"); params.put("active", active); }
+        if (publicListed != null) { where.append(" AND p.`public` = :pub"); params.put("pub", publicListed); }
+        if (tag != null && !tag.isBlank()) {
+            where.append(" AND EXISTS (SELECT 1 FROM product_tags t WHERE t.product_id = p.id AND t.tag = :tag)");
+            params.put("tag", tag.trim());
+        }
+        Long total = jdbc.queryForObject("SELECT COUNT(*) FROM products p" + where, params, Long.class);
+        params.put("limit", size);
+        params.put("offset", (long) page * size);
+        List<Product> rows = jdbc.query(
+            "SELECT p.id, p.barcode, p.name, p.description, p.price, p.active, p.company_id, p.`public`, p.category_id, p.image_resource_id"
+                + " FROM products p" + where + " ORDER BY " + rank + "p.name->>'$.en', p.id LIMIT :limit OFFSET :offset",
+            params, (rs, i) -> mapProduct(rs));
+        return new AdminPage(rows, total == null ? 0 : total);
     }
 }
