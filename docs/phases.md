@@ -137,6 +137,7 @@ One daily job removes old rows from a fixed list of tables. The admin chooses th
 |------|-------|
 | Push notifications | Not needed for payments (the kiosk and invoice update on their own). Only if another use appears. |
 | Customer-facing order history polish | The orders screen exists; polish only if the client app becomes a priority. |
+| Branch groups (regions) | The data model and the role scope "branch group" already work. Missing: create, rename, delete, move a branch into a group, and a dashboard screen. Build when a client has about 10 or more branches or asks for regional managers. Configuration inheritance (company, group, branch) is a separate, later idea. |
 
 ---
 
