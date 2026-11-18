@@ -108,8 +108,9 @@ One daily job removes old rows from a fixed list of tables. The admin chooses th
 | Integration sync queue: payload of finished rows (emptied, row kept) | 30 days | 14 days |
 | Device logs | 30 days | 14 days |
 | Sync removals | 180 days | 30 days |
+| Unpaid orders with their items, history and failed payments (off by default) | off | 15 days |
 
-- Orders, order items, payments, coupon redemptions, offer applications and inventory wastes are never removed.
+- Paid orders and everything attached to them, and inventory wastes, are never removed. Unpaid orders are removed only when that task is turned on.
 - **Integration sync queue: never delete its rows.** The orders report decides "synced" from the finished order rows in this table, so deleting them would show old orders as not synced. The cleanup only empties the stored content of finished rows and keeps the row itself.
 - Rows that are still pending or failed are never touched, however old. A failed row keeps its error until someone removes it by hand.
 - Catalog pulls (about one row a day) are not cleaned; remove them by hand if wanted.

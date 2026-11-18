@@ -26,7 +26,7 @@ public class AuditService {
 
     public static final String SYSTEM = "SYSTEM";
     public static final String ORGANIZATION = "ORGANIZATION";
-    public static final List<String> TYPES = List.of("SYSTEM", "OFFER", "COUPON", "ROLE", "USER", "WASTE");
+    public static final List<String> TYPES = List.of("SYSTEM", "OFFER", "COUPON", "ROLE", "USER", "WASTE", "ORDER");
     private static final int MAX_PAGE_SIZE = 200;
 
     private final NamedParameterJdbcTemplate jdbc;

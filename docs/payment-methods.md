@@ -126,7 +126,12 @@ Flutter shows confirmation sheet
 Stripe / MyFatoorah webhook → POST /api/webhooks/stripe  (or /myfatoorah)
     → controller looks up order via payment_attempts.provider_reference
     → calls orderService.confirmPaymentFromWebhook()
+        ↳ Stripe: the controller already checked Stripe's signature
+        ↳ MyFatoorah: the webhook has no signature check, so the server asks MyFatoorah itself (GetPaymentStatus)
+          and ignores the webhook unless MyFatoorah says the invoice is paid
         ↳ marks order PAID (sp_mark_order_paid)
+        ↳ publishes OrderPaidEvent once (only when this call really moved the order to PAID): stock is taken and
+          the Odoo push is queued. The return to the invoice page (verifyRedirectCallback) does the same
         ↳ writes final row to payments table
         ↳ deletes from payment_attempts
         ↳ fires SSE event → QrPaymentScreen dialog auto-closes

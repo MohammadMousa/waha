@@ -13,4 +13,8 @@ import java.math.BigDecimal;
 public interface RedirectPaymentProvider {
     PaymentSession createSession(BigDecimal amount, String currency, String reference, String successUrl, String cancelUrl);
     PaymentStatus checkStatus(String providerReference);
+
+    // True when the provider's webhook is verified by a signature before it reaches the order. When false, the order
+    // service asks the provider itself (checkStatus) before it believes a "paid" webhook.
+    default boolean webhookIsSigned() { return false; }
 }

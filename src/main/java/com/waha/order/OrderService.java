@@ -337,8 +337,9 @@ public class OrderService {
             if (status == PaymentStatus.PAID) {
                 orderRepository.recordPayment(orderId, providerName, "PAID", storedRef, null);
                 orderRepository.removePaymentAttempt(storedRef);
-                orderRepository.markPaid(orderId, info.version(), storedRef, providerName);
+                boolean advanced = orderRepository.markPaid(orderId, info.version(), storedRef, providerName);
                 sseRegistry.notifyPaid(orderId);
+                if (advanced) publishPaid(orderId);
             }
         } catch (Exception e) {
             log.warn("Redirect callback verification failed — order={} provider={}: {}", orderId, providerName, e.getMessage());
@@ -369,12 +370,38 @@ public class OrderService {
             return;
         }
 
+        // A webhook that carries no signature is only a hint: believe "paid" only if the provider says so itself.
+        if (status == PaymentStatus.PAID) {
+            RedirectPaymentProvider redirect = redirectProviders.get(provider);
+            if (redirect != null && !redirect.webhookIsSigned()) {
+                PaymentStatus confirmed;
+                try {
+                    confirmed = redirect.checkStatus(providerReference);
+                } catch (Exception e) {
+                    log.warn("Webhook says paid but {} could not confirm it — order={} ref={}: {}", provider, orderId, providerReference, e.getMessage());
+                    return;
+                }
+                if (confirmed != PaymentStatus.PAID) {
+                    log.warn("Webhook says paid but {} says {} — ignored, order={} ref={}", provider, confirmed, orderId, providerReference);
+                    return;
+                }
+            }
+        }
+
         orderRepository.recordPayment(orderId, provider, status.name(), providerReference, null);
         orderRepository.removePaymentAttempt(providerReference);
 
         if (status == PaymentStatus.PAID) {
-            orderRepository.markPaid(orderId, info.version(), providerReference, provider);
+            boolean advanced = orderRepository.markPaid(orderId, info.version(), providerReference, provider);
             sseRegistry.notifyPaid(orderId);
+            if (advanced) publishPaid(orderId);
         }
+    }
+
+    // Stock and the Odoo push listen to this event. Only the call that really moved the order to PAID publishes it,
+    // so a repeated webhook or a racing callback never takes stock twice.
+    private void publishPaid(String orderId) {
+        OrderResponse paid = orderRepository.getOrderDetail(orderId, true);
+        eventPublisher.publishEvent(new OrderPaidEvent(orderId, paid.storeId(), paid.currency()));
     }
 }

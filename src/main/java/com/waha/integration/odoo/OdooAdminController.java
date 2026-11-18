@@ -78,6 +78,7 @@ public class OdooAdminController {
         body.put("username",            s.username()           != null ? s.username()           : "");
         body.put("customerOverride",    s.customerOverride()   != null ? s.customerOverride()   : "");
         body.put("pushTarget",          s.pushTarget());
+        body.put("createMissingProducts", systemRepo.createMissingProducts(s.id()));
         body.put("lastCategorySyncAt",  s.lastCategorySyncAt() != null ? s.lastCategorySyncAt().toString() : null);
         body.put("lastProductSyncAt",   s.lastProductSyncAt()  != null ? s.lastProductSyncAt().toString()  : null);
         body.put("queue",               queueStats);
@@ -86,7 +87,9 @@ public class OdooAdminController {
 
     // ── POST /api/admin/odoo/configure ────────────────────────────────────────
     // pushTarget: "SALES" or "POS"; omitted keeps the current value.
-    record ConfigureRequest(String baseUrl, String apiKey, String username, String customerOverride, String pushTarget) {}
+    // createMissingProducts: true lets an order push create a product in Odoo when none matches; omitted keeps the current value.
+    record ConfigureRequest(String baseUrl, String apiKey, String username, String customerOverride, String pushTarget,
+                            Boolean createMissingProducts) {}
 
     @PostMapping("/configure")
     public ResponseEntity<?> configure(
@@ -121,11 +124,13 @@ public class OdooAdminController {
         // Remembered points of sale and sessions are Odoo ids of the old database.
         if (previousUrl != null && !previousUrl.equalsIgnoreCase(sys.baseUrl())) posLinks.deleteAll(sys.id());
         if (pushTarget != null) systemRepo.updatePushTarget(sys.id(), pushTarget);
+        if (request.createMissingProducts() != null) systemRepo.updateCreateMissingProducts(sys.id(), request.createMissingProducts());
         // Reset cached partner so next order uses the new override.
         orderSyncService.resetPartnerCache();
         posOrderService.resetCaches();
         return ResponseEntity.ok(Map.of("id", sys.id(), "name", sys.name(), "enabled", sys.enabled(),
-            "pushTarget", pushTarget != null ? pushTarget : sys.pushTarget()));
+            "pushTarget", pushTarget != null ? pushTarget : sys.pushTarget(),
+            "createMissingProducts", systemRepo.createMissingProducts(sys.id())));
     }
 
     // Throws ForbiddenException if the current store is not the integration owner.

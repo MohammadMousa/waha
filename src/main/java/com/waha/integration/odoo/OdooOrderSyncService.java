@@ -9,6 +9,7 @@ import com.waha.integration.ExternalSystemRepository;
 import com.waha.integration.SyncQueueItem;
 import com.waha.integration.SyncQueueRepository;
 import com.waha.order.OrderPaidEvent;
+import com.waha.product.ProductRepository;
 import com.waha.order.OrderRepository;
 import com.waha.order.dto.OrderResponse;
 import org.slf4j.Logger;
@@ -42,6 +43,7 @@ public class OdooOrderSyncService {
     private final OdooClient odooClient;
     private final ObjectMapper objectMapper;
     private final OdooPosOrderService posOrderService;
+    private final ProductRepository productRepository;
 
     public OdooOrderSyncService(ExternalSystemRepository systemRepo,
                                  SyncQueueRepository queueRepo,
@@ -49,7 +51,8 @@ public class OdooOrderSyncService {
                                  OrderRepository orderRepository,
                                  OdooClient odooClient,
                                  ObjectMapper objectMapper,
-                                 OdooPosOrderService posOrderService) {
+                                 OdooPosOrderService posOrderService,
+                                 ProductRepository productRepository) {
         this.systemRepo     = systemRepo;
         this.queueRepo      = queueRepo;
         this.mappingRepo    = mappingRepo;
@@ -57,6 +60,7 @@ public class OdooOrderSyncService {
         this.odooClient     = odooClient;
         this.objectMapper   = objectMapper;
         this.posOrderService = posOrderService;
+        this.productRepository = productRepository;
     }
 
     // Fires after OrderService marks an order PAID.
@@ -330,7 +334,7 @@ public class OdooOrderSyncService {
         }
     }
 
-    private List<ResolvedLine> resolveLines(ExternalSystem sys, SyncQueueItem item, JsonNode order) {
+    List<ResolvedLine> resolveLines(ExternalSystem sys, SyncQueueItem item, JsonNode order) {
         List<ResolvedLine> lines = new ArrayList<>();
         JsonNode items = order.path("items");
         if (!items.isArray()) return lines;
@@ -343,20 +347,27 @@ public class OdooOrderSyncService {
             if (productMap.isPresent()) {
                 odooProductId = Long.parseLong(productMap.get().externalId());
             } else {
-                // No cached mapping — search Odoo by barcode first, name as fallback.
-                String barcode     = lineNode.path("barcode").asText(null);
+                // No cached mapping: search Odoo by every barcode of the product (primary first), then by name.
+                // When nothing matches and the account allows it, create the product in Odoo.
                 String productName = lineNode.path("name").path("en").asText(null);
+                List<String> barcodes = allBarcodes(localProductId, lineNode.path("barcode").asText(null));
                 try {
                     List<Long> found = List.of();
-                    if (barcode != null && barcode.matches("ODOO_\\d+")) {
-                        // Placeholder barcode from the catalog pull: ODOO_<template id>.
-                        found = odooClient.search(sys.baseUrl(), sys.apiKey(), sys.username(),
-                            "product.product",
-                            List.of(List.of("product_tmpl_id", "=", Long.parseLong(barcode.substring(5)))));
-                    } else if (barcode != null && !barcode.isBlank()) {
-                        found = odooClient.search(sys.baseUrl(), sys.apiKey(), sys.username(),
-                            "product.product",
-                            List.of(List.of("barcode", "=", barcode.trim())));
+                    for (String b : barcodes) {
+                        if (b.matches("ODOO_\\d+")) {
+                            // Placeholder barcode from the catalog pull: ODOO_<template id>.
+                            found = odooClient.search(sys.baseUrl(), sys.apiKey(), sys.username(),
+                                "product.product",
+                                List.of(List.of("product_tmpl_id", "=", Long.parseLong(b.substring(5)))));
+                            if (!found.isEmpty()) break;
+                        }
+                    }
+                    if (found.isEmpty()) {
+                        List<String> real = barcodes.stream().filter(b -> !b.matches("ODOO_\\d+")).toList();
+                        if (!real.isEmpty()) {
+                            found = odooClient.search(sys.baseUrl(), sys.apiKey(), sys.username(),
+                                "product.product", List.of(List.of("barcode", "in", real)));
+                        }
                     }
                     if (found.isEmpty() && productName != null && !productName.isBlank()) {
                         found = odooClient.search(sys.baseUrl(), sys.apiKey(), sys.username(),
@@ -367,15 +378,20 @@ public class OdooOrderSyncService {
                         odooProductId = found.get(0);
                         mappingRepo.save(sys.id(), "PRODUCT", String.valueOf(localProductId),
                             String.valueOf(odooProductId), item.storeId());
-                        log.info("Resolved product_id={} for barcode='{}' name='{}' on-the-fly",
-                            odooProductId, barcode, productName);
+                        log.info("Resolved product_id={} for barcodes={} name='{}' on-the-fly",
+                            odooProductId, barcodes, productName);
+                    } else if (systemRepo.createMissingProducts(sys.id())) {
+                        odooProductId = createProductInOdoo(sys, localProductId, productName, barcodes);
+                        mappingRepo.save(sys.id(), "PRODUCT", String.valueOf(localProductId),
+                            String.valueOf(odooProductId), item.storeId());
+                        log.info("Created product_id={} in Odoo for barcodes={} name='{}'", odooProductId, barcodes, productName);
                     } else {
-                        log.warn("Product barcode='{}' name='{}' (id={}) not found in Odoo — line sent without product_id",
-                            barcode, productName, localProductId);
+                        log.warn("Product barcodes={} name='{}' (id={}) not found in Odoo — line sent without product_id",
+                            barcodes, productName, localProductId);
                     }
                 } catch (Exception e) {
-                    log.warn("Could not resolve Odoo product barcode='{}' name='{}': {}",
-                        barcode, productName, e.getMessage());
+                    log.warn("Could not resolve Odoo product barcodes={} name='{}': {}",
+                        barcodes, productName, e.getMessage());
                 }
             }
             int qty = lineNode.path("quantity").asInt();
@@ -388,6 +404,48 @@ public class OdooOrderSyncService {
                 lineNode.path("name").path("en").asText("Product"), discount, net, lineTax));
         }
         return lines;
+    }
+
+    // Every barcode of a product, primary first. The order line's own barcode is used when the product has none saved.
+    private List<String> allBarcodes(long productId, String lineBarcode) {
+        List<String> out = new ArrayList<>();
+        for (ProductRepository.BarcodeEntry e : productRepository.findBarcodesByProduct(productId)) {
+            if (e.barcode() != null && !e.barcode().isBlank() && !out.contains(e.barcode().trim())) out.add(e.barcode().trim());
+        }
+        if (lineBarcode != null && !lineBarcode.isBlank() && !out.contains(lineBarcode.trim())) out.add(lineBarcode.trim());
+        return out;
+    }
+
+    // Name of the one Odoo product category used for products created from Waha.
+    static final String DEFAULT_ODOO_CATEGORY = "waha_products";
+
+    // Creates the product in Odoo (stored price without VAT, real primary barcode) in the default category.
+    // Odoo keeps one barcode per product, so only the primary one is sent.
+    private long createProductInOdoo(ExternalSystem sys, long localProductId, String productName, List<String> barcodes) {
+        var product = productRepository.findByIds(List.of(localProductId)).stream().findFirst()
+            .orElseThrow(() -> new OdooException("Product " + localProductId + " no longer exists in Waha"));
+        String name = productName != null && !productName.isBlank() ? productName.trim()
+            : product.name().path("ar").asText("Product " + localProductId);
+        List<String> real = barcodes.stream().filter(b -> !b.matches("ODOO_\\d+")).toList();
+        if (real.isEmpty()) throw new OdooException("Product '" + name + "' has no real barcode, so it cannot be created in Odoo");
+
+        Map<String, Object> values = new HashMap<>();
+        values.put("name", name);
+        values.put("barcode", real.get(0));
+        values.put("list_price", product.price() == null ? 0.0 : product.price().doubleValue());
+        values.put("sale_ok", true);
+        values.put("categ_id", defaultOdooCategory(sys));
+        if (OdooPosOrderService.TARGET_POS.equals(sys.pushTarget())) values.put("available_in_pos", true);
+        return odooClient.create(sys.baseUrl(), sys.apiKey(), sys.username(), "product.product", values);
+    }
+
+    // Finds the "waha_products" category in Odoo, or creates it the first time.
+    private long defaultOdooCategory(ExternalSystem sys) {
+        List<Long> found = odooClient.search(sys.baseUrl(), sys.apiKey(), sys.username(),
+            "product.category", List.of(List.of("name", "=", DEFAULT_ODOO_CATEGORY)));
+        if (!found.isEmpty()) return found.get(0);
+        return odooClient.create(sys.baseUrl(), sys.apiKey(), sys.username(), "product.category",
+            Map.of("name", DEFAULT_ODOO_CATEGORY));
     }
 
     private Optional<Long> findExistingSaleOrder(ExternalSystem sys, String orderId) {

@@ -303,18 +303,28 @@ public class OdooCatalogService {
         if (matchedId != null) {
             localId = matchedId;
             updateProduct(localId, nameJson, BigDecimal.valueOf(price), localCategoryId, active);
-            // Keep primary barcode in product_barcodes in sync with Odoo's barcode.
-            jdbc.getJdbcTemplate().update(
-                "INSERT INTO sync_removals (organization_id, table_name, row_id) " +
-                "SELECT p.company_id, 'barcodes', b.id FROM product_barcodes b JOIN products p ON p.id = b.product_id " +
-                "WHERE b.product_id = ? AND b.is_primary = 1 AND b.barcode != ?",
-                localId, barcode);
-            jdbc.getJdbcTemplate().update(
-                "DELETE FROM product_barcodes WHERE product_id = ? AND is_primary = 1 AND barcode != ?",
-                localId, barcode);
-            jdbc.getJdbcTemplate().update(
-                "INSERT IGNORE INTO product_barcodes (product_id, barcode, is_primary) VALUES (?, ?, 1)",
-                localId, barcode);
+            // Keep the primary barcode in sync with Odoo's barcode. When Odoo's barcode is already one of this
+            // product's extra barcodes, it becomes the primary one and the old primary stays as an extra.
+            Integer alreadyOurs = jdbc.getJdbcTemplate().queryForObject(
+                "SELECT COUNT(*) FROM product_barcodes WHERE product_id = ? AND barcode = ?", Integer.class, localId, barcode);
+            if (alreadyOurs != null && alreadyOurs > 0) {
+                jdbc.getJdbcTemplate().update(
+                    "UPDATE product_barcodes SET is_primary = (barcode = ?) WHERE product_id = ? AND is_primary <> (barcode = ?)",
+                    barcode, localId, barcode);
+            } else {
+                jdbc.getJdbcTemplate().update(
+                    "INSERT INTO sync_removals (organization_id, table_name, row_id) " +
+                    "SELECT p.company_id, 'barcodes', b.id FROM product_barcodes b JOIN products p ON p.id = b.product_id " +
+                    "WHERE b.product_id = ? AND b.is_primary = 1 AND b.barcode != ?",
+                    localId, barcode);
+                jdbc.getJdbcTemplate().update(
+                    "DELETE FROM product_barcodes WHERE product_id = ? AND is_primary = 1 AND barcode != ?",
+                    localId, barcode);
+                jdbc.getJdbcTemplate().update(
+                    "INSERT IGNORE INTO product_barcodes (product_id, barcode, is_primary) VALUES (?, ?, 1)",
+                    localId, barcode);
+            }
+            jdbc.getJdbcTemplate().update("UPDATE products SET barcode = ? WHERE id = ? AND barcode <> ?", barcode, localId, barcode);
             isNew = false;
         } else {
             localId = insertProduct(barcode, nameJson, BigDecimal.valueOf(price), localCategoryId, active);

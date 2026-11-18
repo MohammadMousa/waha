@@ -69,6 +69,18 @@ public class ExternalSystemRepository {
         return findByName(name).orElseThrow();
     }
 
+    // Whether an order push may create a product in Odoo when none matches (off by default).
+    public boolean createMissingProducts(long id) {
+        Boolean v = jdbc.queryForObject("SELECT create_missing_products FROM external_systems WHERE id = :id",
+            Map.of("id", id), Boolean.class);
+        return v != null && v;
+    }
+
+    public void updateCreateMissingProducts(long id, boolean value) {
+        jdbc.update("UPDATE external_systems SET create_missing_products = :v WHERE id = :id",
+            Map.of("v", value, "id", id));
+    }
+
     public void updatePushTarget(long id, String pushTarget) {
         jdbc.update("UPDATE external_systems SET push_target = :t WHERE id = :id",
             Map.of("t", pushTarget, "id", id));

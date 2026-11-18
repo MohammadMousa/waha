@@ -45,7 +45,8 @@ public enum Permission {
     ASSIGN_ROLES,       // give or take away roles for users and employees — organization owner and above
     VIEW_ORGANIZATION_AUDIT, // read the organization's own audit history (offers, coupons, roles) — organization owner and above
     VIEW_WASTES,        // see wastes and export them — organization owner, given to others by the owner
-    CREATE_WASTES;      // record wastes (also by import) — organization owner, given to others by the owner
+    CREATE_WASTES,      // record wastes (also by import) — organization owner, given to others by the owner
+    DELETE_UNPAID_ORDERS; // delete unpaid orders by hand, one or many — organization owner, given to others by the owner
 
     // Roles whose permissions are fixed in code and never read from the database:
     // SUPER_ADMIN is everything, KIOSK is the device list the kiosk apps rely on.

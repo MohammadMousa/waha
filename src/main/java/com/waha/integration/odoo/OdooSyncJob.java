@@ -20,9 +20,29 @@ public class OdooSyncJob {
         this.catalogService = catalogService;
     }
 
+    private static final int MAX_RETRIES = 3;
+
+    // Retries left after a failed nightly pull (kept in memory: a restart drops them).
+    private volatile int retriesLeft = 0;
+
     @Scheduled(cron = "0 0 3 * * *")
     public void runDailySync() {
-        systemRepo.findByName("ODOO").ifPresent(sys -> runSync(sys, "SCHEDULED"));
+        retriesLeft = 0;
+        systemRepo.findByName("ODOO").ifPresent(sys -> {
+            SyncResult r = runSync(sys, "SCHEDULED");
+            if (!r.success() && sys.enabled()) retriesLeft = MAX_RETRIES;
+        });
+    }
+
+    // A failed nightly pull (for example a network or DNS blip) is tried again every 15 minutes, up to 3 times.
+    @Scheduled(fixedDelay = 15 * 60_000L, initialDelay = 15 * 60_000L)
+    public void retryFailedSync() {
+        if (retriesLeft <= 0) return;
+        retriesLeft--;
+        systemRepo.findByName("ODOO").ifPresent(sys -> {
+            SyncResult r = runSync(sys, "SCHEDULED");
+            if (r.success()) retriesLeft = 0;
+        });
     }
 
     public SyncResult runSync(ExternalSystem sys, String triggeredBy) {

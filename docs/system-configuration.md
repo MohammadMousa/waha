@@ -90,13 +90,14 @@ A job runs every night at 03:30 and removes old rows from a fixed list of tables
 | `sync_queue_payload` | `Cleanup_SyncQueuePayload_Days` | 30 | 14 | Empties the stored content of finished (`DONE`) order rows; the rows stay |
 | `device_logs` | `Cleanup_DeviceLogs_Days` | 30 | 14 | Deletes device logs |
 | `sync_removals` | `Cleanup_SyncRemovals_Days` | 180 | 30 | Deletes old removals; keep longer than any device stays offline |
+| `unpaid_orders` | `Cleanup_UnpaidOrders_Days` | 0 (off) | 15 | Deletes unpaid orders with their items, history and failed payments. See `docs/unpaid-orders.md`. 30 is a good value to start with |
 
 - `GET /api/admin/system/cleanup` returns, per task: `key`, `label`, `description`, `setting`, `days`, `enabled`, `defaultDays`,
   `minDays`, `rows`, `eligible` (rows a run would remove now), `lastRunAt`, `lastRemoved`, `lastSource` (`SCHEDULED` or `MANUAL`), `lastError`.
 - `POST /api/admin/system/cleanup/run` with `{"table": "<task key>"}` runs one task now (400 when it is off, 409 when a run is
   already in progress); with no body it runs every task that is on. Returns `items` (`key`, `days`, `removed`, `skipped`, `error`) and
   `removed`. Each call is recorded in the system audit as `CLEANUP_RUN`.
-- Never cleaned: orders, order items, payments, coupon redemptions, offer applications and inventory wastes.
+- Never cleaned: paid orders and what belongs to them (items, payments, coupon redemptions, offer applications), and inventory wastes. Unpaid orders are cleaned only when the `unpaid_orders` task is turned on.
 - **Never delete rows of the integration queue (`sync_queue`).** The orders report shows "synced" from finished order rows. The
   cleanup only empties their content, and never touches `PENDING` or `FAILED` rows, so a failed row keeps its error.
 

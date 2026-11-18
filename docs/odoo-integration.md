@@ -152,6 +152,15 @@ using the stored `last_category_sync_at` / `last_product_sync_at` timestamp. Onl
 
 `last_*_sync_at` is updated **only when at least one record is processed** — an empty pull (nothing changed in Odoo) does not advance the timestamp.
 
+Matching a pulled product to a Waha product uses every barcode of the Waha product (primary and extra). When Odoo's barcode is
+already one of the product's extra barcodes, it becomes the primary one and the old primary stays as an extra. When Odoo's
+barcode is a new one, the old primary is removed and the new one saved, and the product's own barcode is updated to match.
+
+### Nightly pull and retries
+
+The pull runs every night at 03:00 (server time). If it fails (for example a network or DNS error), it is tried again every 15
+minutes, up to 3 times. The retries are kept in memory, so a server restart drops them; the next night's pull still runs.
+
 ### Triggering a pull
 
 Via the Odoo Integration admin screen, or API:
@@ -176,6 +185,18 @@ Response:
 1. Customer pays → `OrderService` marks order `PAID` → publishes `OrderPaidEvent`
 2. `OdooOrderSyncService.onOrderPaid()` catches the event and **immediately enqueues** the order into `sync_queue` (status `PENDING`). The sale is never blocked on Odoo availability.
 3. A `@Scheduled` worker runs every **60 seconds**, picks up to 10 PENDING items, and pushes each as a `sale.order` in Odoo.
+
+### Products that are not in Odoo
+
+For an order line without a saved link, Waha searches Odoo by every barcode of the product in one search (primary and extra),
+then by name. If nothing matches:
+- **`createMissingProducts` off (the default):** the line is sent without a product and the push fails with "Product ... is not in Odoo".
+- **`createMissingProducts` on:** Waha creates the product in Odoo with its name, its primary barcode and its stored price without
+  VAT, in the category `waha_products` (created in Odoo the first time), and saves the link. For a POS target the product is also
+  marked as available in POS. Odoo keeps one barcode per product, so extra barcodes stay in Waha. A product with only a
+  placeholder `ODOO_<id>` barcode is never created.
+
+The setting is read and saved with the Odoo account (`GET /api/admin/odoo/status`, `POST /api/admin/odoo/configure`).
 
 ### What gets pushed
 

@@ -9,7 +9,7 @@ One table (`audit_log`) records who changed what. It replaces the old `system_au
 | `SYSTEM` | Super-admin actions: settings, caches, lockouts, audit deletes, cleanup runs, changes to built-in roles | Super admin only |
 | `ORGANIZATION` | Inside one organization: offers, coupons, roles and role assignments | Super admin, and the organization's own owner or anyone holding `VIEW_ORGANIZATION_AUDIT` |
 
-Entity types: `SYSTEM`, `OFFER`, `COUPON`, `ROLE`, `USER`, `WASTE`.
+Entity types: `SYSTEM`, `OFFER`, `COUPON`, `ROLE`, `USER`, `WASTE`, `ORDER`.
 
 Row: `{ id, createdAt, scope, organizationId, entityType, entityId, actorUserId, actorName, action, target, oldValue, newValue, details, ip }`.
 For offers, coupons and roles `oldValue` and `newValue` hold the before and after content as JSON text.
@@ -34,6 +34,7 @@ Listing:
 |--------|---------|
 | Offer, coupon | `CREATE`, `UPDATE`, `ENABLE`, `DISABLE`, `DELETE` |
 | Waste | `WASTE_CREATED` (entity id = waste id, target = `#id`) |
+| Unpaid orders | `UNPAID_ORDER_DELETED` (entity id = order id), `UNPAID_ORDERS_DELETED` (target = number of orders, details = how they were chosen) |
 | User profile | `PROFILE_UPDATED`, `AVATAR_UPDATED`, `AVATAR_REMOVED` (entity type `USER`; by an admin, field names only) |
 | Role | `ROLE_CREATED`, `ROLE_UPDATED`, `ROLE_DELETED`, `ROLE_ASSIGNED`, `ROLE_UNASSIGNED` |
 | System | see `docs/system-configuration.md` |

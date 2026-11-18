@@ -54,7 +54,17 @@ endpoints that do not exist yet. `api_level` lets the client check first and hid
 |   | Customer profile: first and last name, phone, email, gender, birth date, language. See `docs/customer-profile.md` | client, admin |
 |   | Inventory wastes: record, list with totals, export. See `docs/inventory-wastes.md`. Admin product list with search and filters; barcode search in the product lookup | admin |
 
+| 6 | Online payments (Stripe, MyFatoorah) take stock and queue the Odoo push; MyFatoorah "paid" webhooks are confirmed with MyFatoorah itself | admin, kiosk |
+|   | Odoo account setting `createMissingProducts`: create a product in Odoo when an order line matches nothing there. Products are found by any barcode. Nightly pull retries after a failure. See `docs/odoo-integration.md` | admin |
+|   | Delete unpaid orders: one, many, or older than N days; new permission `DELETE_UNPAID_ORDERS`; daily cleanup task for unpaid orders (off by default). See `docs/unpaid-orders.md` | admin |
+
 ## Endpoints per level
+
+### Level 6
+
+- `GET /api/admin/orders/unpaid/count`, `DELETE /api/admin/orders/unpaid/{id}`, `POST /api/admin/orders/unpaid/delete`
+- `GET /api/admin/odoo/status` returns `createMissingProducts`; `POST /api/admin/odoo/configure` accepts it (omitted keeps the current value)
+- Cleanup task `unpaid_orders` and setting `Cleanup_UnpaidOrders_Days` (0 = off, the default)
 
 ### Level 5
 

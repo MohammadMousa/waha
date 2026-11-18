@@ -69,6 +69,9 @@ public class StripeRedirectPaymentProvider implements RedirectPaymentProvider {
     }
 
     @Override
+    public boolean webhookIsSigned() { return true; }   // StripeWebhookController checks Stripe's signature
+
+    @Override
     public PaymentStatus checkStatus(String providerReference) {
         try {
             Session session = Session.retrieve(providerReference);

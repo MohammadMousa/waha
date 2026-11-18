@@ -49,6 +49,7 @@ public class RoleAdminController {
         DESCRIPTIONS.put(Permission.VIEW_ORGANIZATION_AUDIT, "See the organization's own audit history");
         DESCRIPTIONS.put(Permission.VIEW_WASTES, "See inventory wastes and export them");
         DESCRIPTIONS.put(Permission.CREATE_WASTES, "Record inventory wastes, one by one or by import");
+        DESCRIPTIONS.put(Permission.DELETE_UNPAID_ORDERS, "Delete unpaid orders and what belongs to them, one by one or in groups");
         DESCRIPTIONS.put(Permission.UPLOAD_LOGS, "Upload device diagnostic logs");
         DESCRIPTIONS.put(Permission.MANAGE_ROLES, "Create, change and delete the organization's own roles");
         DESCRIPTIONS.put(Permission.ASSIGN_ROLES, "Give or take away roles for users and employees");

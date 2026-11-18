@@ -1,6 +1,7 @@
 package com.waha.cleanup;
 
 import com.waha.config.ConfigService;
+import com.waha.order.UnpaidOrderRepository;
 import com.waha.resource.ResourceRepository;
 import com.waha.sync.SyncRemovalRepository;
 import org.slf4j.Logger;
@@ -17,7 +18,7 @@ import java.util.Map;
 import java.util.concurrent.atomic.AtomicBoolean;
 
 // Removes old rows from a fixed list of tables. How many days each task keeps is a system setting (0 = off).
-// Orders, order items, payments, coupon redemptions and offer applications are never touched. Rows of the
+// Paid orders and everything attached to them are never touched. Unpaid orders are deleted only when that task is turned on. Rows of the
 // integration queue are never deleted: only the stored content of finished order rows is emptied, because the
 // orders report reads "synced" from those rows. Rows that are pending or failed are never changed.
 @Service
@@ -26,6 +27,7 @@ public class CleanupService {
     private static final Logger log = LoggerFactory.getLogger(CleanupService.class);
 
     private static final int BATCH = 5000;
+    private static final int UNPAID_BATCH = 500;
     private static final int MAX_BATCHES_PER_RUN = 200;
     public static final int MAX_DAYS = 3650;
 
@@ -50,21 +52,26 @@ public class CleanupService {
             "Cleanup_DeviceLogs_Days", 30, 14),
         new Task("sync_removals", "Sync removals",
             "List of deleted items that offline devices catch up from; keep longer than any device stays offline",
-            "Cleanup_SyncRemovals_Days", 180, 30)
+            "Cleanup_SyncRemovals_Days", 180, 30),
+        new Task("unpaid_orders", "Unpaid orders",
+            "Unpaid orders with their items, history and failed payments. Never paid orders or payments in progress. Off by default; 30 is a good start",
+            "Cleanup_UnpaidOrders_Days", 0, 15)
     );
 
     private final JdbcTemplate jdbc;
     private final ConfigService config;
     private final ResourceRepository resources;
     private final SyncRemovalRepository removals;
+    private final UnpaidOrderRepository unpaidOrders;
     private final AtomicBoolean running = new AtomicBoolean(false);
 
     public CleanupService(JdbcTemplate jdbc, ConfigService config, ResourceRepository resources,
-                          SyncRemovalRepository removals) {
+                          SyncRemovalRepository removals, UnpaidOrderRepository unpaidOrders) {
         this.jdbc = jdbc;
         this.config = config;
         this.resources = resources;
         this.removals = removals;
+        this.unpaidOrders = unpaidOrders;
     }
 
     public static Task task(String key) {
@@ -136,12 +143,15 @@ public class CleanupService {
             case "sync_queue_payload"    -> "SELECT COUNT(*) FROM sync_queue WHERE entity_type = 'ORDER'";
             case "device_logs"           -> "SELECT COUNT(*) FROM resources WHERE device_id IS NOT NULL";
             case "sync_removals"         -> "SELECT COUNT(*) FROM sync_removals";
+            case "unpaid_orders"         -> null;
             default -> null;
         };
+        if ("unpaid_orders".equals(t.key())) return unpaidOrders.countUnpaid();
         return sql == null ? 0 : nz(jdbc.queryForObject(sql, Long.class));
     }
 
     private long countEligible(Task t, int days) {
+        if ("unpaid_orders".equals(t.key())) return unpaidOrders.countOlderThan(days, null, null);
         String where = switch (t.key()) {
             case "payment_attempts"      -> "FROM payment_attempts WHERE expires_at < NOW() - INTERVAL ? DAY";
             case "audit_log"             -> "FROM audit_log WHERE created_at < NOW() - INTERVAL ? DAY";
@@ -217,8 +227,22 @@ public class CleanupService {
                                                    + SYNC_QUEUE_FILTER + " LIMIT " + BATCH, days);
             case "device_logs"          -> resources.deleteLogsOlderThan(Instant.now().minus(days, ChronoUnit.DAYS));
             case "sync_removals"        -> removals.purgeOlderThan(Instant.now().minus(days, ChronoUnit.DAYS));
+            case "unpaid_orders"        -> purgeUnpaidOrders(days);
             default -> 0;
         };
+    }
+
+    // Small batches, so the delete never holds a long lock on the orders table.
+    private long purgeUnpaidOrders(int days) {
+        long total = 0;
+        for (int i = 0; i < MAX_BATCHES_PER_RUN; i++) {
+            List<String> ids = unpaidOrders.findOlderThan(days, null, null, UNPAID_BATCH);
+            if (ids.isEmpty()) break;
+            int n = unpaidOrders.delete(ids, null);
+            total += n;
+            if (n == 0 || ids.size() < UNPAID_BATCH) break;
+        }
+        return total;
     }
 
     private long batched(String sql, int days) {
