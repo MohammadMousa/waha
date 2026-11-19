@@ -4,14 +4,16 @@ services:
   mysql:
     image: mysql:8.0
     environment:
-      MYSQL_ROOT_PASSWORD: root
+      # Only applies when the database is first created. To change it on an existing database, change it in MySQL first (see docs/deployment.md).
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-root}
       MYSQL_DATABASE: waha
     command: --innodb-buffer-pool-size=384M
     restart: unless-stopped
     volumes:
       - mysql_data:/var/lib/mysql
     ports:
-      - "3307:3306"
+      # DB_PORT_BIND=127.0.0.1 keeps the database reachable from the server itself only. Unset = all interfaces, as before.
+      - "${DB_PORT_BIND:+${DB_PORT_BIND:-}:}3307:3306"
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
       interval: 5s
@@ -34,7 +36,7 @@ services:
     environment:
       DB_HOST: mysql
       DB_USER: root
-      DB_PASSWORD: root
+      DB_PASSWORD: ${DB_ROOT_PASSWORD:-root}
       JAVA_TOOL_OPTIONS: "-Xmx512m"   # keeps the JVM from growing into the database's share of a small server
       # Pulled from a real .env file (not .env.example2) sitting next to
       # this docker-compose.yml - Compose substitutes ${VAR} from .env
@@ -49,7 +51,8 @@ services:
       # Encrypts saved secrets (the Odoo API key). Generate once with: openssl rand -base64 32
       WAHA_SECRET_KEY: ${WAHA_SECRET_KEY:-}
     ports:
-      - "8081:8080"
+      # WAHA_PORT_BIND=127.0.0.1 closes direct access to the backend from outside (nginx on 443 stays the public entry). Unset = all interfaces.
+      - "${WAHA_PORT_BIND:+${WAHA_PORT_BIND:-}:}8081:8080"
     logging:
       driver: "json-file"
       options:
