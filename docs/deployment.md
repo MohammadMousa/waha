@@ -41,6 +41,7 @@ The admin dashboard and the HTTPS entry are one nginx container (`waha_admin_web
 | Setting | Default | On the server |
 |---|---|---|
 | `COMPOSE_PROFILES` | empty (nginx not started) | `web`: `docker compose up -d`, `deploy.sh` and a reboot bring nginx up together with the backend, on the same network |
+| `NGINX_CONF_DIR` | empty (`./nginx/conf.d`, the configuration in this repo) | Leave empty on the current server. A server built from scratch with another domain, or HTTP only, sets it to its own folder |
 
 - Nginx looks the backend up by name on each request. It starts even if the backend is not reachable yet (answers 502 until it is) and keeps working when the backend container is recreated.
 - A backend deploy does not touch the nginx container unless its configuration changed. A web deploy does not touch the backend.

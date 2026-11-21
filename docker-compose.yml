@@ -73,7 +73,7 @@ services:
       - "443:443"
     volumes:
       - ./admin_build/web:/usr/share/nginx/html:ro
-      - ./nginx/conf.d:/etc/nginx/conf.d
+      - ${NGINX_CONF_DIR:-./nginx/conf.d}:/etc/nginx/conf.d
       - ./certbot/conf:/etc/letsencrypt
       - ./certbot/www:/var/www/certbot
     logging:
