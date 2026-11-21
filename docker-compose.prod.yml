@@ -1,3 +1,5 @@
+# DEPRECATED: the admin web now lives in docker-compose.yml behind the "web" profile (COMPOSE_PROFILES=web in .env).
+# Kept for one release so the server can be moved first; delete this file after that (see docs/deployment.md).
 services:
   admin-web:
     image: nginx:alpine

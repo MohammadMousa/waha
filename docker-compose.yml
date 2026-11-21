@@ -59,5 +59,28 @@ services:
         max-size: "20m"
         max-file: "5"
 
+  # Admin dashboard + HTTPS entry (nginx). Off by default; the server turns it on with COMPOSE_PROFILES=web in .env,
+  # so deploys, reboots and "docker compose up -d" bring it up together with the backend on the same network.
+  admin-web:
+    profiles: ["web"]
+    image: nginx:alpine
+    container_name: waha_admin_web
+    restart: unless-stopped
+    depends_on:
+      - waha
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./admin_build/web:/usr/share/nginx/html:ro
+      - ./nginx/conf.d:/etc/nginx/conf.d
+      - ./certbot/conf:/etc/letsencrypt
+      - ./certbot/www:/var/www/certbot
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
 volumes:
   mysql_data:
