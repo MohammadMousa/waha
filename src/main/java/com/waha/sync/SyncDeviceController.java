@@ -47,8 +47,15 @@ public class SyncDeviceController {
     public ResponseEntity<?> deviceConfig(@RequestHeader(value = "Authorization", required = false) String authHeader) {
         UserSession session = sessionService.requireSession(authHeader);
         if (session.deviceId() == null) throw new ForbiddenException("A device session is required");
+        Map<String, Object> body = deviceConfigBody(session);
+        if (body == null) return ResponseEntity.status(404).body(new ErrorResponse("Device not found"));
+        return ResponseEntity.ok(body);
+    }
+
+    // The device-config answer for a device session; null when the device no longer exists. Also used by the combined pull.
+    public Map<String, Object> deviceConfigBody(UserSession session) {
         var info = deviceRepository.findSyncInfo(session.deviceId());
-        if (info.isEmpty()) return ResponseEntity.status(404).body(new ErrorResponse("Device not found"));
+        if (info.isEmpty()) return null;
         var d = info.get();
         var store = storeRepository.getStoreConfig(d.storeId());
 
@@ -65,7 +72,7 @@ public class SyncDeviceController {
         String base = configService.getPublicBaseUrl();
         body.put("invoiceBaseUrl", base == null ? null : base.replaceAll("/+$", ""));
         body.put("lastReferenceSerial", orderService.lastReferenceSerial(d.id()));
-        return ResponseEntity.ok(body);
+        return body;
     }
 
     // The store's optional reference prefix (null when not set).

@@ -57,8 +57,16 @@ endpoints that do not exist yet. `api_level` lets the client check first and hid
 | 6 | Online payments (Stripe, MyFatoorah) take stock and queue the Odoo push; MyFatoorah "paid" webhooks are confirmed with MyFatoorah itself | admin, kiosk |
 |   | Odoo account setting `createMissingProducts`: create a product in Odoo when an order line matches nothing there. Products are found by any barcode. Nightly pull retries after a failure. See `docs/odoo-integration.md` | admin |
 |   | Delete unpaid orders: one, many, or older than N days; new permission `DELETE_UNPAID_ORDERS`; daily cleanup task for unpaid orders (off by default). See `docs/unpaid-orders.md` | admin |
+| 7 | Combined sync pull: `POST /api/sync/pull` answers device settings, removals and every table in one request, with a row budget; the per-table calls stay. Sync table settings per organization (switch a table off, expiration period). See `docs/sync-combined-pull.md` | kiosk, admin |
 
 ## Endpoints per level
+
+### Level 7
+
+- `POST /api/sync/pull` (device session with a store)
+- `POST /api/categories` creates a category (permission `MANAGE_CATEGORIES`)
+- `GET /api/admin/sync/tables`, `PUT /api/admin/sync/tables/{table}` (permission `MANAGE_SETTINGS`)
+- `GET /api/sync/{table}` and `GET /api/sync/removals` answer an empty last page for a table the organization switched off
 
 ### Level 6
 

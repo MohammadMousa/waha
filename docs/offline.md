@@ -98,7 +98,16 @@ Response: `{ "items": [...], "last": true|false, "next": {"since": "...", "after
 - Rows deleted on the server are announced in the removals list (see "Removals" below). Only three real deletes exist: a primary
   barcode replaced by the Odoo import, an alternate barcode removed by an admin, and a gallery image removed from a product.
 - The existing `GET /api/products/sync` stays unchanged for old kiosks.
+- With API level 7 the kiosk should prefer the combined pull (section 2b); these single calls remain for old kiosks and as its fallback.
 - The kiosk must not take orders until products, barcodes and payment-methods have each completed one full pull.
+
+## 2b. Combined pull, API level 7 (built in the backend, not deployed)
+`POST /api/sync/pull` answers device-config, removals and every table in ONE request (at most 500 rows per answer, a table that got no
+room is marked `deferred`), so a pull with nothing new is one request instead of about 8. The kiosk uses it when `api_level` is 7 or higher
+and falls back to the per-table calls above otherwise (or on a 404). The per-table calls and removals stay unchanged for old kiosks.
+An organization can also switch any table off and give it an expiration period (`GET /api/admin/sync/tables`, `PUT /api/admin/sync/tables/{table}`, stored in
+`sync_table_config`). A switched-off table answers `skipped: "disabled"`, a table checked more recently than its period answers `skipped: "fresh"`; the answer also
+carries `tableConfig` so the kiosk can skip such tables before it sends. Full contract: `docs/sync-combined-pull.md`.
 
 ## 3. Device config for starting offline (GET /api/sync/device-config)
 `{ deviceId, deviceNo, storeId, organizationId, currency, vatRate, pricesIncludeVat, shortCode, invoiceBaseUrl, lastReferenceSerial }`
@@ -272,5 +281,5 @@ Deleting a product also lists its barcodes and gallery images. A product or cate
 - **Normal call:** send the saved `afterId`. Response `{items:[{id, table, rowId, removedAt}], last, next:{afterId}, resetRequired, serverTime}`.
   Delete each `rowId` from the local `table`, save `next.afterId` only after the page is committed, repeat while `last` is false.
 - **resetRequired:** the list was cleaned past your position (device offline longer than the keep period, default 180 days,
-  server setting `waha.sync.removals-retention-days`). No items come back; pull all tables in full, then save `next.afterId`.
+  system setting `Cleanup_SyncRemovals_Days`, lowest 30). No items come back; pull all tables in full, then save `next.afterId`.
 - Ids are never reused, so a removal cannot hit another row. Call it in the same cycle as the other pulls.

@@ -66,6 +66,23 @@ public class CategoryRepository {
         );
     }
 
+    public boolean resourceExists(long id) {
+        Long n = jdbc.queryForObject("SELECT COUNT(*) FROM resources WHERE id = :id", Map.of("id", id), Long.class);
+        return n != null && n > 0;
+    }
+
+    // New category at the end of the organization's list. Returns the new id.
+    public long create(long organizationId, String nameJson, Long imageResourceId) {
+        Long max = jdbc.queryForObject("SELECT COALESCE(MAX(sort_order), 0) FROM categories WHERE company_id = :org",
+            Map.of("org", organizationId), Long.class);
+        var keys = new org.springframework.jdbc.support.GeneratedKeyHolder();
+        jdbc.update("INSERT INTO categories (name, company_id, sort_order, image_resource_id) VALUES (:name, :org, :sort, :img)",
+            new org.springframework.jdbc.core.namedparam.MapSqlParameterSource()
+                .addValue("name", nameJson).addValue("org", organizationId)
+                .addValue("sort", (max == null ? 0 : max) + 1).addValue("img", imageResourceId), keys);
+        return keys.getKey().longValue();
+    }
+
     public long productCount(long id) {
         Long n = jdbc.queryForObject("SELECT COUNT(*) FROM products WHERE category_id = :id", Map.of("id", id), Long.class);
         return n == null ? 0 : n;

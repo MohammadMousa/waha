@@ -26,17 +26,19 @@ public class SyncFeedController {
     private final SessionService sessionService;
     private final StoreRepository storeRepository;
     private final ConfigService configService;
-    private final SyncFeedRepository feeds;
+    private final SyncFeedReader reader;
     private final SyncRemovalRepository removals;
+    private final SyncTableConfigService tableConfig;
 
     public SyncFeedController(SessionService sessionService, StoreRepository storeRepository,
-                              ConfigService configService, SyncFeedRepository feeds,
-                              SyncRemovalRepository removals) {
+                              ConfigService configService, SyncFeedReader reader,
+                              SyncRemovalRepository removals, SyncTableConfigService tableConfig) {
         this.sessionService = sessionService;
         this.storeRepository = storeRepository;
         this.configService = configService;
-        this.feeds = feeds;
+        this.reader = reader;
         this.removals = removals;
+        this.tableConfig = tableConfig;
     }
 
     // Rows deleted on the server. Without afterId: starting position only (nothing listed). With afterId: the removals
@@ -53,6 +55,16 @@ public class SyncFeedController {
         int limit = pageSize(size, orgId);
         Map<String, Object> body = new LinkedHashMap<>();
         long latest = removals.latestId(orgId);
+        // Switched off by the organization: records are still kept, only the listing stops (docs/sync-combined-pull.md, section 4).
+        // The starting position (no afterId) is still handed out; with an afterId the page is empty and the position stays.
+        if (afterId != null && !tableConfig.get(orgId, SyncTable.REMOVALS).active()) {
+            body.put("items", List.of());
+            body.put("last", true);
+            body.put("next", Map.of("afterId", afterId));
+            body.put("resetRequired", false);
+            body.put("serverTime", Instant.now());
+            return ResponseEntity.ok(body);
+        }
         boolean reset = afterId != null && afterId < removals.purgedUpTo();
         List<Map<String, Object>> items = List.of();
         boolean last = true;
@@ -85,20 +97,16 @@ public class SyncFeedController {
         long storeId = session.storeId();
         long orgId = storeRepository.findCompanyId(storeId);
         int limit = pageSize(size, orgId);
-        int fetch = limit + 1; // one extra row tells us whether this is the last page
-
-        List<SyncFeedRepository.Row> rows = switch (table) {
-            case "products" -> feeds.products(orgId, since, afterId, fetch, storeRepository.getStoreConfig(storeId).vatRate());
-            case "barcodes" -> feeds.barcodes(orgId, since, afterId, fetch);
-            case "categories" -> feeds.categories(orgId, since, afterId, fetch);
-            case "payment-methods" -> feeds.paymentMethods(since, afterId, fetch);
-            case "store-payment-methods" -> feeds.storePaymentMethods(storeId, since, afterId, fetch);
-            case "product-images" -> feeds.productImages(orgId, since, afterId, fetch);
-            default -> null;
-        };
-        if (rows == null) {
+        SyncTable syncTable = SyncTable.feedByKey(table).orElse(null);
+        if (syncTable == null) {
             return ResponseEntity.status(404).body(new ErrorResponse("Unknown sync table: " + table));
         }
+        // Switched off by the organization: an empty last page and the cursor unchanged, so the device pulls nothing.
+        if (!tableConfig.get(orgId, syncTable).active()) {
+            return ResponseEntity.ok(page(List.of(), limit, since, afterId));
+        }
+        int fetch = limit + 1; // one extra row tells us whether this is the last page
+        List<SyncFeedRepository.Row> rows = reader.forStore(orgId, storeId).fetch(syncTable, since, afterId, fetch);
         return ResponseEntity.ok(page(rows, limit, since, afterId));
     }
 
@@ -124,11 +132,12 @@ public class SyncFeedController {
     }
 
     private int pageSize(Integer requested, long orgId) {
-        int size = requested != null ? requested : configured(orgId);
+        int size = requested != null ? requested : configured(configService, orgId);
         return Math.max(1, Math.min(size, MAX_SIZE));
     }
 
-    private int configured(long orgId) {
+    // The organization's rows per page (sync_pull_patch_size), or the default.
+    static int configured(ConfigService configService, long orgId) {
         try {
             String v = configService.findAllProperties(orgId).get("sync_pull_patch_size");
             return v == null ? DEFAULT_SIZE : Integer.parseInt(v.trim());
