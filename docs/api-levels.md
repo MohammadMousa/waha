@@ -26,10 +26,11 @@ endpoints that do not exist yet. `api_level` lets the client check first and hid
 
 ## Rules for the backend
 
-1. Raise `ApiLevel.CURRENT` by 1 per deployment, not per change: the level is one above the last deployed backend. Work added before that deployment goes into the same level.
-2. Add a row to the table below in the same commit.
-3. Never lower it, and never remove or change the meaning of an existing endpoint without a new level.
-4. Deploying order stays: backend first, then the dashboard / kiosk.
+1. Raise `ApiLevel.CURRENT` only when a client app needs the new level to detect the release and choose between the new integration and the old logic. A release with nothing for clients to check keeps the current level.
+2. When it is raised, raise it by 1 per deployment, not per change: the level is one above the last deployed backend. Work added before that deployment goes into the same level.
+3. When it is raised, add a row to the table below in the same commit.
+4. Never lower it, and never remove or change the meaning of an existing endpoint without a new level.
+5. Deploying order stays: backend first, then the dashboard / kiosk.
 
 ## Levels
 
