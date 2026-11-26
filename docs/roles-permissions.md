@@ -11,8 +11,8 @@ All three share the same `user_sessions` table and the same `Authorization: Bear
 | Domain | Table | Login | PIN / Password | Used by |
 |--------|-------|-------|----------------|---------|
 | **Admin** | `users` | `POST /api/auth/login` | bcrypt password | Admin app |
-| **Employee / POS** | `employees` | `POST /api/pos/auth/login` | 4-digit plain PIN | POS app |
-| **Device / Kiosk** | `devices` | `POST /api/kiosk/auth/login` | 4-digit plain PIN | Kiosk app |
+| **Employee / POS** | `employees` | `POST /api/pos/auth/login` | 6-digit PIN (stored hashed) | POS app |
+| **Device / Kiosk** | `devices` | `POST /api/kiosk/auth/login` | 6-digit PIN (stored hashed) | Kiosk app |
 
 There is **no FK** between `employees` / `devices` and `users`. They are fully
 independent identities. An employee is not a user; a device is not a user.
@@ -75,17 +75,8 @@ should use this array for UI gating — don't re-derive from role name.
 
 ## API reference — Admin app (users)
 
-### `POST /api/auth/login`
-Standard admin login. Same endpoint as before.
-```json
-// Request
-{"username": "admin@waha", "password": "secret"}
-
-// 200
-{"token": "...", "userId": 1, "organizationId": 5, "storeId": null, "mode": null}
-
-// 401 → {"message": "Invalid username or password"}
-```
+### Sign-in
+See [api/authentication.md](api/authentication.md).
 
 ### `GET /api/organizations`
 SUPER_ADMIN uses this after login to pick an org (frontend auto-selects the first one).
@@ -266,99 +257,21 @@ All endpoints are scoped to the session's `organizationId`.
 
 ---
 
-## API reference — POS app login
+## POS and kiosk sign-in, sessions
 
-Employee sessions have **no storeId in the session**. The working store is sent by
-the frontend as a field in each request that needs it (e.g. `POST /api/inventory/visits`
-body includes `"storeId"`). Permissions are resolved once at login from all the
-employee's roles across all branches and returned in the login response — no
-second call needed.
-
-### `POST /api/pos/auth/login`
-```json
-// Request
-{"username": "sara", "pinCode": "1234", "organizationId": 5}
-
-// 200
-{
-  "token": "...",
-  "employeeId": 3,
-  "organizationId": 5,
-  "permissions": ["VIEW_PRODUCTS", "PROCESS_ORDERS", "VIEW_INVENTORY", "PROCESS_INVENTORY"],
-  "stores": [
-    { "id": 5, "name": "alj", "displayName": {"ar": "الجزيرة", "en": "Aljazeera"} },
-    { "id": 6, "name": "epc", "displayName": {"ar": "بنك ايبك", "en": "EPC Bank"} }
-  ]
-}
-
-// 401 → {"message": "Invalid username or PIN"}
-// 401 → {"message": "Account is disabled"}
-```
-
-`stores` — all stores the employee is assigned to (from `employee_stores`).
-Frontend uses this to show a branch picker; the chosen `storeId` is then sent
-with subsequent inventory calls. No store-selection API call is needed.
-
-### `POST /api/pos/auth/logout`
-`Authorization` header, empty 200 body.
-
----
-
-## API reference — Kiosk app login
-
-### `POST /api/kiosk/auth/login`
-```json
-// Request
-{"username": "kiosk-branch1", "pinCode": "9999", "organizationId": 5}
-
-// 200
-{
-  "token": "...",
-  "deviceId": 1,
-  "organizationId": 5,
-  "storeId": 5,
-  "mode": "KIOSK",
-  "permissions": ["VIEW_PRODUCTS", "VIEW_OWN_ORDERS", "PROCESS_ORDERS"]
-}
-
-// 401 → {"message": "Invalid username or PIN"}
-// 401 → {"message": "Device is disabled"}
-```
-
-### `POST /api/kiosk/auth/logout`
-`Authorization` header, empty 200 body.
-
----
-
-## Session behaviour — what's the same for all three
-
-- Header: `Authorization: Bearer <token>` on every authenticated request
-- Token is opaque (not JWT) — looked up server-side on every call
-- TTL: 30 days (configurable via `waha.session.ttl-days`)
-- `storeId` in session: set for kiosk (device's store); always null for employee sessions — employees pass storeId per-request
-- `mode` in the session drives backend validation policy (`KIOSK` / `NORMAL`)
+See [api/authentication.md](api/authentication.md).
 
 ---
 
 ## SUPER_ADMIN org handling
 
-`SUPER_ADMIN` has `organization_id = 0` in the DB (platform-level).
-After login, frontend calls `GET /api/organizations` and auto-selects the first org.
-All subsequent admin operations are scoped to that org. There is no "system-level screen" yet — org is always set before any action.
+`SUPER_ADMIN` has `organization_id = 0` (platform level). To work inside an organization it sends `X-Organization-Id` on each request; see [api/conventions.md](api/conventions.md#headers).
 
 ---
 
-## Error shape
+## Errors
 
-All errors are `{"message": "..."}`. Match on HTTP status, use `message` for display/logging.
-
-| Status | Meaning |
-|--------|---------|
-| 400 | Validation failure — bad input |
-| 401 | Missing / expired / invalid session |
-| 403 | Valid session but insufficient permissions |
-| 404 | Resource not found |
-| 409 | Conflict — duplicate username, already paid, etc. |
+See [api/conventions.md](api/conventions.md#errors).
 
 ---
 

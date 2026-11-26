@@ -20,7 +20,7 @@ CREATED → PAID
 
 ## Notes
 
-- Order IDs are UUID v4, generated client-side at checkout time.
+- Order IDs are UUID v7, generated client-side at checkout time.
 - Calling `POST /api/orders` twice with the same UUID is a safe no-op (idempotent, via `sp_create_order_idempotent`).
 - An order's `status` transitions are guarded by an optimistic-concurrency stored proc (`sp_mark_order_paid`) — concurrent `/pay` calls for the same order result in exactly one winner.
 

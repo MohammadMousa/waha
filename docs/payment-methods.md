@@ -123,7 +123,7 @@ Flutter shows confirmation sheet
 ### Webhook confirmation (REDIRECT / QR_LINK)
 
 ```
-Stripe / MyFatoorah webhook → POST /api/webhooks/stripe  (or /myfatoorah)
+Stripe / MyFatoorah webhook → POST /api/payments/webhooks/stripe  (or /myfatoorah)
     → controller looks up order via payment_attempts.provider_reference
     → calls orderService.confirmPaymentFromWebhook()
         ↳ Stripe: the controller already checked Stripe's signature

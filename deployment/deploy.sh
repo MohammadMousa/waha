@@ -2,6 +2,9 @@
 # Deploy the latest main on the server: ./deploy.sh   (run as the user that owns the backups, e.g. with sudo)
 # Steps: check -> backup age -> tag running version -> pull -> build/start -> health check.
 # It never rolls back by itself; on failure it prints the rollback command (rollback.sh).
+
+# deploy.sh pulls the backend code, builds it and starts the containers. With COMPOSE_PROFILES=web, that includes nginx. It doesn't build, upload or replace the dashboard files. Nginx serves whatever is in waha/admin_build/web.
+
 set -euo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/db-backup/lib.sh"
 load_config

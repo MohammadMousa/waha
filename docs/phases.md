@@ -1,6 +1,6 @@
 # Project Phases
 
-_Last updated: 2026-11-16_
+_Last updated: 2026-11-26_
 
 ---
 
@@ -9,7 +9,7 @@ _Last updated: 2026-11-16_
 | Item | Status |
 |------|--------|
 | Spring Boot backend (JDBC, no JPA) | ✅ Done |
-| MySQL schema + Flyway migrations (V1–V29) | ✅ Done |
+| MySQL schema + Flyway migrations (V1–V31) | ✅ Done |
 | Product catalog, categories, barcodes, pictures | ✅ Done |
 | Order lifecycle (CREATED → PAID / CANCELLED) | ✅ Done |
 | Idempotent order creation (stored proc) | ✅ Done |
