@@ -16,17 +16,20 @@ public class TerminalSessionController {
 
     private final TerminalSessionService service;
     private final SessionService sessionService;
+    private final TerminalAccessGuard access;
 
-    public TerminalSessionController(TerminalSessionService service, SessionService sessionService) {
+    public TerminalSessionController(TerminalSessionService service, SessionService sessionService,
+                                     TerminalAccessGuard access) {
         this.service = service;
         this.sessionService = sessionService;
+        this.access = access;
     }
 
     // Kiosk: customer picks "Terminal Payment" — creates PENDING attempt.
     @PostMapping("/orders/{orderId}/terminal-session")
     public ResponseEntity<?> create(@PathVariable String orderId,
                                     @RequestHeader(value = "Authorization", required = false) String auth) {
-        sessionService.requireSession(auth);
+        access.noteOrder(access.requireDevice(auth), orderId, "create");
         try {
             return ResponseEntity.ok(service.create(orderId));
         } catch (OrderNotPayableException e) {
@@ -42,7 +45,9 @@ public class TerminalSessionController {
     public ResponseEntity<?> lateApproval(@PathVariable String orderId,
                                           @RequestBody Map<String, Object> body,
                                           @RequestHeader(value = "Authorization", required = false) String auth) {
-        var session = sessionService.requireSession(auth);
+        var caller = access.requireDevice(auth);
+        var session = caller.session();
+        access.noteOrder(caller, orderId, "late-approval");
         sessionService.requirePermission(auth, com.waha.auth.Permission.PROCESS_ORDERS, session.storeId());
         Object amountRaw = body.get("amount");
         Object rrnRaw    = body.get("rrn");
@@ -66,7 +71,10 @@ public class TerminalSessionController {
     @GetMapping("/terminal-sessions/{id}")
     public ResponseEntity<?> get(@PathVariable String id,
                                  @RequestHeader(value = "Authorization", required = false) String auth) {
-        sessionService.requireSession(auth);
+        var caller = access.requireDevice(auth);
+        if (!access.ownsAttempt(caller, id)) {
+            return ResponseEntity.status(404).body(new ErrorResponse("Terminal session not found: " + id));
+        }
         try {
             return ResponseEntity.ok(service.getById(id));
         } catch (InvalidRequestException e) {
@@ -74,11 +82,11 @@ public class TerminalSessionController {
         }
     }
 
-    // Terminal app: polls with no params — gets oldest PENDING terminal session globally.
+    // Terminal app: polls with no params — gets the oldest PENDING terminal session of the device's store.
     @GetMapping("/terminal-sessions/pending")
     public ResponseEntity<?> pending(@RequestHeader(value = "Authorization", required = false) String auth) {
-        sessionService.requireSession(auth);
-        Optional<TerminalAttemptView> session = service.findPending();
+        var caller = access.requireDevice(auth);
+        Optional<TerminalAttemptView> session = service.findPending(caller.device().storeId(), caller.device().organizationId());
         return session.map(ResponseEntity::ok)
                       .orElse(ResponseEntity.noContent().build());
     }
@@ -89,7 +97,7 @@ public class TerminalSessionController {
     public ResponseEntity<?> confirm(@PathVariable String id,
                                      @RequestBody Map<String, Object> body,
                                      @RequestHeader(value = "Authorization", required = false) String auth) {
-        sessionService.requireSession(auth);
+        access.noteAttempt(access.requireDevice(auth), id, "confirm");
         try {
             String authCode = (String) body.get("authCode");
             @SuppressWarnings("unchecked")
@@ -105,7 +113,7 @@ public class TerminalSessionController {
     @PostMapping("/terminal-sessions/{id}/cancel")
     public ResponseEntity<?> cancel(@PathVariable String id,
                                     @RequestHeader(value = "Authorization", required = false) String auth) {
-        sessionService.requireSession(auth);
+        access.noteAttempt(access.requireDevice(auth), id, "cancel");
         service.cancel(id);
         return ResponseEntity.ok(Map.of("status", "CANCELLED"));
     }

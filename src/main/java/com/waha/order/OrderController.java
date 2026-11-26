@@ -15,7 +15,11 @@ public class OrderController {
     private final OrderService orderService;
     private final SessionService sessionService;
 
-    public OrderController(OrderService orderService, SessionService sessionService) {
+    private final com.waha.payment.SimulatedPaymentGuard simulatedPaymentGuard;
+
+    public OrderController(OrderService orderService, SessionService sessionService,
+                           com.waha.payment.SimulatedPaymentGuard simulatedPaymentGuard) {
+        this.simulatedPaymentGuard = simulatedPaymentGuard;
         this.orderService = orderService;
         this.sessionService = sessionService;
     }
@@ -158,6 +162,7 @@ public class OrderController {
     @PostMapping("/{id}/pay")
     public ResponseEntity<?> pay(@PathVariable String id, @RequestBody PayOrderRequest request) {
         try {
+            simulatedPaymentGuard.check(id);
             return ResponseEntity.ok(orderService.payOrder(id, request));
         } catch (OrderNotFoundException e) {
             return ResponseEntity.status(404).body(new ErrorResponse(e.getMessage()));

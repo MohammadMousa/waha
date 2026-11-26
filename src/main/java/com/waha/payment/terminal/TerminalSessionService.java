@@ -67,13 +67,14 @@ public class TerminalSessionService {
         return new TerminalAttemptView(id, orderId, info.totalAmount(), info.currency(), "PENDING");
     }
 
-    // Terminal app polls this — returns the oldest PENDING terminal attempt, no store filter.
-    public Optional<TerminalAttemptView> findPending() {
+    // Terminal app polls this — returns the oldest PENDING terminal attempt of one store.
+    public Optional<TerminalAttemptView> findPending(long storeId, long organizationId) {
         List<TerminalAttemptView> rows = jdbc.query("""
             SELECT pa.id, pa.order_id, o.total_amount, o.currency, pa.status
             FROM payment_attempts pa
             JOIN orders o ON o.id = pa.order_id
             WHERE pa.provider = 'terminal' AND pa.status = 'PENDING'
+              AND o.store_id = ? AND o.organization_id = ?
             ORDER BY pa.created_at ASC
             LIMIT 1
             """,
@@ -83,7 +84,8 @@ public class TerminalSessionService {
                 rs.getBigDecimal("total_amount"),
                 rs.getString("currency"),
                 rs.getString("status")
-            )
+            ),
+            storeId, organizationId
         );
         return rows.isEmpty() ? Optional.empty() : Optional.of(rows.get(0));
     }

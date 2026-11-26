@@ -7,6 +7,7 @@ Optional settings in the server's `.env` (next to `docker-compose.yml`). Unset k
 | `DB_PORT_BIND` | all interfaces | `127.0.0.1`: the database port is reachable from the server itself only. Use an SSH tunnel from a laptop. |
 | `WAHA_PORT_BIND` | all interfaces | `127.0.0.1`: the backend port is not reachable from outside. Nginx on 443 stays the public entry, and the deploy health check uses localhost. |
 | `DB_ROOT_PASSWORD` | `root` | A random value, used by the database and the backend. |
+| `WAHA_SIMULATED_PAYMENT_ENABLED` | `false` | Leave unset on a server with real sales. `true` allows the fake "simulated" payment, only for stores where that method is on. |
 
 Port settings take effect when the containers are recreated (next deploy). The database data is not touched.
 

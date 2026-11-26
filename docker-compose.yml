@@ -48,6 +48,8 @@ services:
       MYFATOORAH_BASE_URL: ${MYFATOORAH_BASE_URL:-https://apitest.myfatoorah.com}
       MYFATOORAH_WEBHOOK_SECRET: ${MYFATOORAH_WEBHOOK_SECRET:-}
       WAHA_PUBLIC_BASE_URL: ${WAHA_PUBLIC_BASE_URL:-http://localhost:8081}
+      # Test setups only: allows the fake "simulated" payment. Leave unset on a server with real sales.
+      WAHA_SIMULATED_PAYMENT_ENABLED: ${WAHA_SIMULATED_PAYMENT_ENABLED:-false}
       # Encrypts saved secrets (the Odoo API key). Generate once with: openssl rand -base64 32
       WAHA_SECRET_KEY: ${WAHA_SECRET_KEY:-}
     ports:

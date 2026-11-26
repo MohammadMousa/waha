@@ -31,6 +31,9 @@ waha:
   secret-key: ${WAHA_SECRET_KEY:}
   # Country code added to phone numbers typed without one (966 = Saudi Arabia).
   default-country-code: ${WAHA_DEFAULT_COUNTRY_CODE:966}
+  payment:
+    # Simulated payment is a test tool that marks orders paid with no money. Off unless a test setup turns it on.
+    simulated-enabled: ${WAHA_SIMULATED_PAYMENT_ENABLED:false}
   cors:
     # Native Flutter (Android/iOS) calls this API directly and never sends
     # CORS preflight requests at all - this setting only matters if you test

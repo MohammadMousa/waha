@@ -18,6 +18,18 @@ public class PaymentMethodRepository {
         this.objectMapper = objectMapper;
     }
 
+    // True when a simulated method is on globally and the store has not switched it off.
+    public boolean isSimulatedEnabledForStore(long storeId) {
+        Integer n = jdbcTemplate.queryForObject(
+            "SELECT COUNT(*) FROM payment_methods pm " +
+            "LEFT JOIN payment_methods_store pms " +
+            "       ON pms.payment_method_id = pm.id AND pms.store_id = ? " +
+            "WHERE pm.provider = 'SIMULATED' AND pm.active = TRUE " +
+            "  AND (pms.id IS NULL OR pms.active = TRUE)",
+            Integer.class, storeId);
+        return n != null && n > 0;
+    }
+
     // Returns all payment methods available to a store in a given mode.
     // A method is available when:
     //   1. globally active (payment_methods.active = TRUE)
